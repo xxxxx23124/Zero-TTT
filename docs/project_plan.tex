@@ -23,7 +23,7 @@
   linkcolor=Primary,
   urlcolor=Secondary,
   citecolor=Accent,
-  pdftitle={Zero-TTT 项目规划},
+  pdftitle={Zero-TTT 可行性项目规划},
   pdfauthor={Zero-TTT Project}
 }
 
@@ -35,7 +35,7 @@
 
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{\textcolor{Primary}{Zero-TTT 项目规划}}
+\fancyhead[L]{\textcolor{Primary}{Zero-TTT 可行性项目规划}}
 \fancyhead[R]{\textcolor{Secondary}{AlphaZero + Test-Time Training}}
 \fancyfoot[C]{\thepage}
 
@@ -43,11 +43,12 @@
 \newcommand{\gameinit}{\theta_{\mathrm{game}}}
 \newcommand{\searchinit}{\theta_{\mathrm{search}}}
 \newcommand{\stopgrad}{\operatorname{stopgrad}}
+\newcommand{\clipnorm}{\operatorname{clip}_{1.0}}
 \newcommand{\code}[1]{\texttt{#1}}
 
 \title{\textbf{\Huge \projectname}\par
   \vspace{0.6em}
-  \Large AlphaZero 与端到端测试时训练融合项目规划}
+  \Large 单卡、顺序执行的 AlphaZero 与测试时训练融合规划}
 \author{个人研究与娱乐项目}
 \date{2026 年 8 月}
 
@@ -57,493 +58,460 @@
 \thispagestyle{empty}
 
 \begin{abstract}
-本文规划一个面向 19 路围棋的 AlphaZero 与 Test-Time Training（TTT）融合项目。
-模型使用标准可二阶求导的空间注意力、AlphaGo Zero 风格的八局面输入，以及可在真实落子后更新的快权重记忆。
-快权重被视为由搜索监督的可学习状态，而不是对 361 个空间 token 的显式键值存储：长期块在整盘棋中保存计划与搜索纠偏，短期块在每个真实回合内吸收 MCTS 分支揭示的战术信息。
-系统分别学习长期与短期初始化；每盘棋开始时，黑白双方派生出两份相互隔离的长期状态，每手另为当前行棋方创建一份用后即弃的短期状态。
-项目以验证机制、完成训练闭环和保证可恢复性为目标，不安排消融实验、超参数搜索或棋力指标分析，也不维护多 batch 下不同样本的 TTT 状态。
+本文规划一个面向 19 路围棋的 AlphaZero 与 Test-Time Training（TTT）融合机制原型。
+项目以单进程、单张不超过 16\,GiB 的 NVIDIA GPU 和所有模型调用 batch size 固定为 1 为硬约束，优先验证规则、搜索、快权重生命周期、元梯度和恢复闭环，而不承诺棋力提升或训练效率。
+模型在最后两个 Transformer 块的 FFN down-projection 上叠加可更新残差：长期残差分别由黑白双方在整盘棋中持有，短期残差由当前行棋方在每手 warm MCTS 后临时更新。
+短期单步更新保留精确二阶元梯度；长期更新采用带动量与向初始化遗忘的一阶直通近似，不保存跨回合高阶计算图。
+训练采用同一模型快照的两遍顺序流程：第一遍无梯度完成整盘自博弈并持久化搜索轨迹，终局已知后第二遍从开局重建快状态、逐手反向，最后只执行一次外循环优化器更新。
 \end{abstract}
 
 \vfill
 \begin{center}
-\begin{tabularx}{0.92\textwidth}{>{\bfseries\color{Primary}}p{0.24\textwidth}X}
+\begin{tabularx}{0.94\textwidth}{>{\bfseries\color{Primary}}p{0.27\textwidth}X}
 棋盘与规则 & 19$\times$19，贴目 7.5，面积计分，362 个动作 \\
-序列批量 & 固定 batch size 为 1；允许跨序列梯度累积 \\
-局部上下文 & 当前局面加过去 7 个局面，共 8 个局面 \\
-长期记忆 & 一份长期初始化，黑白两份每局私有运行时状态 \\
-单手适应 & 一份短期初始化，每手执行 warm search 后派生临时状态 \\
-二阶窗口 & 长期状态保留最近 16 个真实回合的计算图；短期图当手结束 \\
-默认执行方式 & PyTorch eager mode；暂不使用 \code{torch.compile} \\
-主要算力目标 & Linux + Docker + 单张 NVIDIA GPU；CPU 用于开发测试 \\
+执行拓扑 & 单进程、单 GPU、单局同步；无异步 actor/learner \\
+模型批量 & 所有模型前向与反向的 batch size 固定为 1 \\
+默认模型 & 6 块，隐藏维度 192，6 头，FFN 维度 768 \\
+搜索预算 & 每手 warm 32 次，更新短期状态后 final 96 次 \\
+长期元梯度 & 一阶直通近似；数值状态整盘保留，计算图逐手释放 \\
+短期元梯度 & 每手一次可微 SGD，精确传播二阶梯度 \\
+数值与执行 & FP32、PyTorch eager、非重入 activation checkpoint \\
+显存目标 & 默认配置峰值低于 15\,GiB，给 16\,GiB 单卡留出余量 \\
 \end{tabularx}
 \end{center}
 \vfill
 \clearpage
 
+\begingroup
+\small
+\setlength{\parskip}{0pt}
 \tableofcontents
+\endgroup
 \clearpage
 
-\section{项目定位与理论判断}
+\section{项目定位与可行性边界}
 
-\subsection{项目目标}
+\subsection{完成目标}
 
-\projectname{} 的目标不是复现 AlphaGo Zero 的最终棋力，也不是验证 TTT 在围棋上的统计显著收益，而是完成以下工程闭环：
-
-\begin{itemize}
-  \item 在可靠的 19 路围棋规则环境上运行 AlphaZero 风格的策略--价值网络与 MCTS；
-  \item 让模型在一盘棋内通过真实落子持续更新私有长期快权重，把超过八局面窗口的信息压缩到参数状态中；
-  \item 让模型在单手内从 warm MCTS 的访问分布与备份价值学习，再用适应后的短期状态重新搜索；
-  \item 在训练时对两类快权重更新求二阶梯度，使长期初始化学会记忆、短期初始化学会适应；
-  \item 支持监督预训练、自博弈训练、梯度截断、检查点恢复和 Docker 迁移；
-  \item 保持个人项目所需的可读性，避免多 batch、多设备和复杂分布式状态管理。
-\end{itemize}
-
-\subsection{可行性结论}
-
-该思路在理论和工程上均可实现。原版 TTT 把一个可学习模型的参数作为 RNN 隐状态，并以训练视图、标签视图和查询视图构造逐层的 K/V/Q 重建任务\cite{tttoriginal}。TTT-E2E 则明确去掉逐层键值绑定，直接使用网络末端的下一 token 任务损失更新后段 MLP，并通过外循环元学习优化其初始化\cite{ttte2e}。
-
-本项目采用后一种端到端原则。因此，361 个棋盘交叉点不是依次写入的历史 token，而是同一时刻的空间集合；它们继续使用完整非因果注意力与二维 RoPE。TTT 的时间轴定义在更高一层：整盘的真实回合序列，以及单手 warm MCTS 访问到的局面集合。快权重压缩的是搜索对网络判断所做的纠正，而不是原始棋盘内容本身。
-
-本项目与语言模型 TTT-E2E 并不完全等价，主要差异如下：
+\projectname{} 的完成条件是一个可检查、可恢复的机制闭环：
 
 \begin{itemize}
-  \item 语言模型使用自然发生的下一 token 作为内循环目标；本项目中，短期块使用 warm tree 的策略与备份价值，行棋方长期块使用 final root，观察方只能使用公开的实际动作。
-  \item MCTS 是离散搜索过程，本项目\textbf{不对 MCTS 本身求导}。访问分布被视为停止梯度的策略改进目标，因此“端到端”只表示外循环梯度穿过网络和快权重更新。
-  \item 训练时只精确传播长期状态最近 16 手的二阶梯度；短期状态不跨手。早期长期更新通过截断近似处理，所以实现结果不是整盘精确元梯度。
+  \item 在固定的 19 路规则环境上运行策略--价值网络和顺序 PUCT；
+  \item 在单手内从 warm 搜索监督更新短期快权重，再用新状态重新搜索；
+  \item 在整盘棋中维护黑白两份相互隔离的长期数值状态，并在每个真实动作提交后更新；
+  \item 在终局已知后回放同一轨迹，使短期初始化获得精确二阶信用，使长期初始化获得一阶直通信用；
+  \item 支持静态监督预训练、完整自博弈、轨迹持久化、整盘学习、崩溃恢复和 Docker 迁移；
+  \item 用小模型和明确预算在 16\,GiB 单卡上跑通，而不是复现 AlphaGo Zero 的棋力或吞吐率。
 \end{itemize}
 
-因此，本项目应被描述为“受 TTT-E2E 启发的、带私有在线参数记忆的 AlphaZero”，而不是原论文算法在围棋上的直接移植。是否提升棋力是开放问题，不作为项目完成条件。
+\subsection{严格的非并行约束}
 
-\section{围棋状态、动作与规则环境}
+MVP 明确不实现并行自博弈、并行棋局、批量叶节点推理、树并行、序列并行、上下文并行、数据并行、DDP、FSDP、流水线并行、张量并行、跨设备快状态或异步 actor/learner。任意时刻只有一盘活动棋局、一套黑白长期状态和至多一份当前手短期状态。
 
-\subsection{固定问题定义}
+batch size 为 1 的约束覆盖监督预训练、自博弈网络评价、warm trace 写入、final root 评价和学习回放。允许把多个 batch-size-1 损失顺序累积到同一个优化器步骤，也允许 CUDA 在线性层和注意力矩阵内部使用普通硬件并行；这两者都不构成多样本或多序列训练。
 
-项目只支持 19$\times$19 棋盘，动作空间固定为 361 个落点加 1 个停着（pass），共 362 个动作。默认贴目为 7.5，采用面积计分。MVP 不支持让子棋、其他贴目、日式数子、其他棋盘尺寸或认输。
+该边界有意牺牲吞吐率，以换取直接的 Python 控制流、动态长度轨迹、逐手动量更新、确定性回放和较小的状态管理面。原始 TTT 的 mini-batch dual form、LaCT 的大 chunk 和 In-Place TTT 的并行 scan 都不在 MVP 中实现\cite{tttoriginal,lact,inplace}。
 
-规则实现采用固定版本的 PettingZoo \code{go\_v5}\cite{pettingzoo-go}，并在其 Minigo \code{Position} 之上封装适合树搜索的不可变状态接口。项目适配层负责：
+\subsection{理论判断与论文取舍}
+
+原始 TTT 把可学习模型的参数作为 RNN 隐状态，并以梯度下降写入上下文\cite{tttoriginal}。TTT-E2E 进一步直接使用网络末端任务损失更新后段 MLP，并通过外循环优化其初始化；其论文和官方实现都选择只更新后四分之一块、使用 SGD 和内循环梯度裁剪\cite{ttte2e}。本项目沿用这一“任务损失写入、外循环训练初始化”的原则，但时间轴是围棋真实回合和 warm 搜索节点，不是语言 token。
+
+In-Place TTT 表明只更新既有 FFN 的 down-projection 可以显著缩小快状态范围\cite{inplace}。本项目采用更保守的残差形式：静态 down-projection 不变，快状态只表示附加的 $\Delta W$。Titans 的动量 surprise 与遗忘机制为长期更新提供直接依据\cite{titans}；ATLAS 的 Omega 规则和 Muon、LaCT 的归一化与 Muon 说明了更复杂更新器的潜力\cite{atlas,lact}，但它们会增加状态、矩阵迭代和高阶求导风险，因此只列为未来方向。
+
+MCTS 是离散策略改进器，本项目不对选择、扩展、节点筛选、访问计数或动作采样求导。所有搜索统计均为停止梯度目标。因此，“端到端”只表示外循环梯度穿过网络及短期快权重更新，不表示穿过搜索算法。
+
+\section{固定围棋问题与模型接口}
+
+\subsection{规则环境}
+
+项目只支持 19$\times$19 棋盘、贴目 7.5、面积计分和 361 个落点加停着共 362 个动作。MVP 不支持让子棋、其他贴目、日式数子、其他棋盘尺寸或认输。
+
+规则适配层固定基于 PettingZoo 1.26.1 的 \code{go\_v5} 及其 Minigo \code{Position}\cite{pettingzoo-go,pettingzoo-version}，并对 MCTS 暴露不可变接口：
 
 \begin{itemize}
-  \item 克隆或派生子状态、生成合法动作掩码、提交真实动作；
-  \item 维护完整动作历史和最近八个棋盘局面；
-  \item 在策略输出前屏蔽非法动作；
-  \item 将终局结果统一转换为当前行棋方视角的 $z\in\{-1,+1\}$。
+  \item 从动作历史重建位置、派生子状态、生成合法动作掩码并提交真实动作；
+  \item 维护当前及过去 7 个局面所需的 17 平面输入；
+  \item 在 softmax 前屏蔽非法动作，并断言停着索引始终为 361；
+  \item 把终局结果转换为每个历史状态当前行棋方视角的 $z_t\in\{-1,+1\}$。
 \end{itemize}
 
-\subsection{网络输入与输出}
+\subsection{输入、角色和输出}
 
-输入张量固定为
+模型输入固定为
 \[
   x_t\in\{0,1\}^{1\times17\times19\times19}.
 \]
-前 16 个平面表示当前及过去 7 个局面中双方棋子的位置，最后一个平面表示当前行棋方。开局不足八个局面时，缺失历史使用全零平面填充。该形式与 AlphaGo Zero 的历史局面表示保持一致\cite{alphagozero}。
-
-网络另接收一个非空间角色标记
+前 16 个平面表示当前及过去 7 个局面中双方棋子的位置，最后一个平面表示当前行棋方。开局缺失历史使用全零平面填充。另有角色标记
 \[
   r\in\{\mathrm{self},\mathrm{opponent}\},
 \]
-用来区分“用自己的搜索分布学习”与“根据对手公开动作学习”。角色标记通过小型嵌入加入全局 token，不改变 17 平面棋盘接口。
+通过小型嵌入加入全局 token，用来区分从自身搜索策略学习与从对手公开动作学习。
 
-输出包括：
+\code{ModelOutput} 只包含：
 
 \begin{itemize}
-  \item 策略 logits $l_t\in\mathbb{R}^{1\times362}$，经合法动作掩码后归一化；
-  \item 价值 $v_t\in[-1,1]^{1\times1}$，表示当前行棋方的预期终局结果。
-  \item 逐动作辅助预测 $q_t\in[-1,1]^{1\times362}$，拟合 MCTS 对已访问合法边的备份均值；它只提供稠密写入梯度，不参与 PUCT。
+  \item 策略 logits $l_t\in\mathbb{R}^{1\times362}$，经合法动作掩码后得到 $p_t$；
+  \item 标量价值 $v_t\in[-1,1]^{1\times1}$，表示当前行棋方的预期终局结果。
 \end{itemize}
 
-棋盘 token 对应 361 个落点，停着动作由全局 token 产生。策略头与逐动作 Q 头共享空间特征，但参数和损失独立。所有入口必须断言 batch size 为 1。多个 warm 节点顺序前向并累积为一次短期梯度；梯度累积不能在一个 batch 中同时保存多组快权重。
+MVP 不包含逐动作 Q 预测头。MCTS 边 Q 只存在于搜索树内部，用于 PUCT 备份及构造节点搜索价值，不成为模型公共接口。
 
-\section{模型结构与双时间尺度初始化}
+\section{参考模型与残差快权重}
 
-\subsection{参考 Transformer}
-
-MVP 使用固定的小型参考配置，避免在项目早期引入参数搜索：
+\subsection{默认配置}
 
 \begin{center}
 \begin{tabular}{ll}
 \toprule
-配置项 & 默认值 \\
+配置项 & MVP 默认值 \\
 \midrule
-Transformer 块数 & 8 \\
-隐藏维度 & 256 \\
-注意力头数 & 8 \\
-FFN 隐藏维度 & 1024 \\
+Transformer 块数 & 6 \\
+隐藏维度 & 192 \\
+注意力头数 & 6 \\
+FFN 隐藏维度 & 768 \\
 空间 token & 361 个交叉点 + 1 个全局 token \\
 注意力 & 完整、非因果、标准缩放点积注意力 \\
 归一化 & LayerNorm \\
 dropout & 0 \\
-快权重块 & 最后 2 个块 \\
+长期快权重块 & 倒数第 2 个块 \\
+短期快权重块 & 最后 1 个块 \\
+参数与计算 dtype & FP32 \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-每个普通块由注意力和静态 FFN 构成。最后两个块额外增加自适应 FFN，与各自的静态 FFN 形成双分支。倒数第二个块是\textbf{长期块}，其运行时参数跨真实回合保留；最后一个块是\textbf{短期块}，其运行时参数只在当前手内有效。长期块位于短期块之前，因此单手战术适应能够查询已经形成的整盘记忆。静态分支保存稳定知识；注意力、嵌入、二维 RoPE、归一化、输出头和静态 FFN 都属于慢权重。
+4 块、隐藏维度 96 的 tiny 配置只用于 CPU 和梯度测试。原先的 8 块、隐藏维度 256、FFN 维度 1024 配置保留为非 MVP 研究档，不能作为首个端到端闭环的验收配置。
 
-\subsection{两类可训练初始化与运行时状态}
+\subsection{有效 down-projection}
 
-系统学习两个职责不同的快权重初始化
+设某个 FFN 的静态中间激活为
 \[
-  \gameinit=\{\theta_j\}_{j\in\mathcal{F}_{\mathrm{game}}},\qquad
-  \searchinit=\{\theta_j\}_{j\in\mathcal{F}_{\mathrm{search}}}.
+  h=\sigma(W_{\mathrm{up}}x+b_{\mathrm{up}}),
 \]
-其中 $\mathcal{F}_{\mathrm{game}}$ 和 $\mathcal{F}_{\mathrm{search}}$ 分别是长期块与短期块内自适应 FFN 的参数集合。两者都是模型参数的一部分，但不存在独立的可训练黑方或白方初始化。
+则两个自适应块的输出都使用
+\[
+  \operatorname{FFN}(x)
+  =\left(W_{\mathrm{static}}+\Delta W_{\mathrm{fast}}\right)h+b_{\mathrm{down}}.
+\]
+注意力、归一化、up-projection、静态 down-projection、嵌入、二维 RoPE 和输出头均为慢权重。内循环白名单只允许替换对应块的 $\Delta W_{\mathrm{fast}}$，从而把每份快状态限制为一个 $192\times768$ 矩阵。
 
-每盘开始时，从长期初始化创建两个数值相同但对象独立的运行时状态：
+系统学习两份残差初始化
+\[
+  \gameinit\in\mathbb{R}^{192\times768},\qquad
+  \searchinit\in\mathbb{R}^{192\times768},
+\]
+二者初始值均为零，但作为外循环参数继续训练。静态矩阵始终保留，因而即使快状态发生漂移，模型仍有不被内循环覆盖的基础路径。
+
+\subsection{运行时状态与生命周期}
+
+每盘开始时创建
 \[
   \phi^B_0=\operatorname{clone}(\gameinit),\qquad
-  \phi^W_0=\operatorname{clone}(\gameinit).
+  \phi^W_0=\operatorname{clone}(\gameinit),
 \]
-每个真实回合开始时，只为当前行棋方创建一份短期状态
+并为双方分别创建同形状的零动量 $m^B_0,m^W_0$。每手开始时只为当前行棋方创建
 \[
-  \psi_{t,0}=\operatorname{clone}(\searchinit),
+  \psi_{t,0}=\operatorname{clone}(\searchinit).
 \]
-并在 warm MCTS 后将其更新为 $\psi_{t,1}$。真实落子后无条件销毁 $\psi_{t,1}$；下一手不会继承其数值。
-
-这一设计表达了两种不同的归纳偏置：$\phi^B$ 与 $\phi^W$ 学习各自整盘经历，$\psi_t$ 则针对单个局面的搜索证据快速适应。它具有三个重要性质：
-
-\begin{enumerate}
-  \item \textbf{没有按玩家复制模型参数。}优化器和普通模型检查点只维护一份 $\gameinit$ 与一份 $\searchinit$。
-  \item \textbf{长期运行时成本仍是两份。}一旦 $\phi^B$ 与 $\phi^W$ 分化，为保证隐私与独立适应，必须保存两份长期张量。
-  \item \textbf{短期状态不会直接提交。}战术结论通过 final root 的监督蒸馏进长期块，而不是把 $\psi_{t,1}$ 复制或合并进 $\phi^c_t$。
-\end{enumerate}
-
-\subsection{信息隔离边界}
-
-黑方搜索只能读取 $\phi^B$ 与当手短期状态，白方搜索只能读取 $\phi^W$ 与当手短期状态。一方的 warm/final 访问分布、边 Q、搜索树统计和短期梯度不得作为另一方的更新输入。观察方只接收公开状态与实际动作。这里的“隐私”是对局算法内部的信息隔离，并非密码学安全；集中式自博弈进程和离线学习器仍可保存完整轨迹用于外循环训练。
-
-\subsection{接口与生命周期摘要}
 
 \begin{center}
 \begin{tabularx}{0.94\textwidth}{>{\bfseries\color{Primary}}lX}
 \toprule
-接口 & 含义 \\
+接口 & 必需字段与生命周期 \\
 \midrule
-\code{ModelOutput} & 策略 logits、当前行棋方标量价值和 362 维逐动作 Q；PUCT 只消费前两项。 \\
-\code{GameFastState} & 黑白各一份，从 $\gameinit$ 派生，整盘持久化，只在真实落子提交后更新。 \\
-\code{SearchFastState} & 当前行棋方每手一份，从 $\searchinit$ 派生，只接受 warm-tree 写入，落子后销毁。 \\
-\code{SearchTrace} & 根及筛选内部节点的 $(s,\pi,Q,V,N)$；它是只读、停止梯度的搜索产物，不进入检查点。 \\
+\code{GameFastState} & 当前残差、动量、版本号；黑白各一份，整盘持久化。 \\
+\code{SearchFastState} & 当前残差和版本号；每手从 $\searchinit$ 创建，真实落子后销毁。 \\
+\code{ModelOutput} & 策略 logits 和当前行棋方标量价值。 \\
+\code{SearchTrace} & 根相对动作路径、访问策略、搜索价值、总访问数；纯数据且停止梯度。 \\
+\code{GameTrajectory} & 模型/配置哈希、随机数状态、真实动作、两阶段 trace 和终局结果。 \\
 \bottomrule
 \end{tabularx}
 \end{center}
 
-\section{真实回合协议}
+\section{快权重写入规则}
 
-设第 $t$ 手的当前行棋方为 $c$，另一方为 $\bar c$，真实落子前状态为 $s_t$。
+\subsection{搜索节点目标}
 
-warm MCTS 固定执行 64 次模拟，并产生一份只读的 \code{SearchTrace}。写入集定义为
+对任意已搜索节点 $u$，由其子边访问计数和备份均值构造
 \[
-  \mathcal{D}^{\mathrm{warm}}_t
-  =\{\text{root}\}\cup
-    \operatorname{Top8}\{u:N_u\ge 8,\ u\ne\text{root}\},
-\]
-其中内部节点按总访问数 $N_u$ 排序。对每个节点 $u$，根据子边访问数和备份均值构造
-\[
-  \pi_u(a)=\frac{N_u(a)}{\sum_b N_u(b)},\qquad
+  \pi_u(a)=\frac{N_u(a)}{\sum_bN_u(b)},\qquad
   V_u=\sum_a\pi_u(a)Q_u(a).
 \]
-未访问边、非法动作和不存在的内部节点不进入 Q 损失。根节点无条件保留，因此数据不足时协议自然退化为只从根学习。
+策略目标只覆盖合法动作，$V_u$ 是当前节点行棋方视角。warm 写入集固定为
+\[
+  \mathcal D_t^{\mathrm{warm}}
+  =\{\mathrm{root}\}\cup
+  \operatorname{Top4}\{u:N_u\ge4,\ u\ne\mathrm{root}\}.
+\]
+内部节点按总访问数排序；数据不足时自然退化为只使用根节点。节点只以根相对动作路径保存，回放时由规则环境重建，不序列化 Python 棋盘对象。
+
+\subsection{短期单步精确二阶更新}
+
+设 $\rho$ 为 Huber 损失，节点权重为
+\[
+  \omega_u=\frac{N_u}{\sum_{v\in\mathcal D_t^{\mathrm{warm}}}N_v}.
+\]
+短期写入损失为
+\[
+  \ell_t^{\mathrm{search}}
+  =\sum_{u\in\mathcal D_t^{\mathrm{warm}}}\omega_u
+   \left[\operatorname{CE}(\pi_u,p_u)
+   +\lambda_s\rho(v_u-V_u)\right],
+\]
+其中 MVP 固定 $\lambda_s=1$。所有节点逐个执行 batch-size-1 前向，损失汇总后只更新一次：
+\[
+  g_s=\nabla_{\psi_{t,0}}\ell_t^{\mathrm{search}},\qquad
+  \psi_{t,1}=\psi_{t,0}-0.1\,\clipnorm(g_s).
+\]
+学习回放时为该梯度继续构造计算图，使适应后外层损失能向 $\searchinit$ 和相关慢权重传播精确二阶梯度。自博弈第一遍使用同一数值公式，但不保留梯度图。
+
+\subsection{长期动量、遗忘与一阶近似}
+
+行棋方长期写入损失使用 final root：
+\[
+  \ell_t^{\mathrm{game,self}}
+  =\operatorname{CE}(\pi_t^F,p_t^0)
+   +\rho(v_t^0-V_t^F),
+\]
+其中 $(p_t^0,v_t^0)$ 由长期状态 $\phi_t^c$ 和未适应的短期初始化 $\psi_{t,0}$ 在真实根局面上产生。观察方不能读取搜索统计，只使用公开动作
+\[
+  \ell_t^{\mathrm{obs}}
+  =\operatorname{CE}\!\left(
+      \operatorname{onehot}(a_t),
+      p(s_t;\phi_t^{\bar c},\psi_{t,0},r=\mathrm{opponent})
+    \right).
+\]
+
+对两类长期损失分别计算 $g=\nabla_\phi\ell$，并使用固定更新器
+\[
+  m'=0.9m+0.1\,\stopgrad\!\left(\clipnorm(g)\right),
+\]
+\[
+  \phi'=\gameinit+0.999(\phi-\gameinit)-0.01m'.
+\]
+动量保存近期连续纠偏，0.999 的保留系数使状态缓慢回到可训练初始化，而不是衰减到零。两者都是明确的工程初值，不声称对围棋最优，MVP 不执行超参数搜索。
+
+学习回放在每手使用直通重锚定
+\[
+  \phi_{\mathrm{meta}}
+  =\gameinit+\stopgrad(\phi_{\mathrm{runtime}}-\gameinit).
+\]
+其前向值等于当前运行时状态，反向则把当前外层损失直接路由到 $\gameinit$，忽略长期更新梯度的 Hessian 和跨回合 Jacobian。每次长期写入都设置 \code{create\_graph=False} 并立即 detach，因此数值记忆跨整盘保留，但 autograd 图不跨真实回合。
+
+\subsection{隐私与版本边界}
+
+黑方搜索只能读取 $\phi^B$，白方搜索只能读取 $\phi^W$。一方的 warm/final 策略、价值、树统计和短期梯度不得成为另一方的输入；观察方只接收公开局面和实际动作。每次短期或长期状态变化都递增版本号，并立即使旧树失效。这里的隐私是算法内部的信息隔离，而不是密码学安全。
+
+\section{两阶段搜索与同快照两遍训练}
+
+\subsection{真实回合协议}
+
+设第 $t$ 手当前行棋方为 $c$，真实落子前状态为 $s_t$：
 
 \begin{enumerate}
-  \item 从 $\searchinit$ 创建 $\psi_{t,0}$。warm search 全程冻结慢权重、$\phi^c_t$ 和 $\psi_{t,0}$；所有假想分支共享同一版本。
-  \item 用 $\mathcal{D}^{\mathrm{warm}}_t$ 顺序前向多个 batch-size-1 局面，按节点访问数归一化损失并累积梯度。执行一次无动量 SGD，只把 $\psi_{t,0}$ 更新为 $\psi_{t,1}$。
-  \item 短期状态版本变化后立即清除 warm tree；禁止在新权重下复用旧节点的先验、叶值或边统计。
-  \item 固定 $(\phi^c_t,\psi_{t,1})$ 执行 final MCTS。final 搜索仍按当前回合类型使用 128 或 800 次模拟，产生 $\pi^F_t$、$Q^F_t$、$V^F_t$ 和动作 $a_t$。
-  \item 当前回合外层损失评价适应后网络相对 final 搜索目标与终局结果的预测，从而训练短期初始化“会想”。MCTS 及节点筛选过程全部停止梯度。
-  \item 由真实规则环境验证并提交 $a_t$。只有提交成功，才允许更新长期状态。
-  \item 为避免把临时参数直接写入长期记忆，丢弃 $\psi_{t,1}$，使用 $(\phi^c_t,\psi_{t,0})$ 在 $s_t$ 上重新前向，并以 final root 的 $(\pi^F_t,Q^F_t,V^F_t)$ 更新行棋方长期块。短期块、慢权重和输出头在该内循环中冻结。
-  \item 观察方不得读取任何 warm/final 搜索统计，只用公开动作执行长期更新：
-  \[
-    \ell^{\mathrm{obs}}_t
-      =\operatorname{CE}\!\left(\operatorname{onehot}(a_t),
-        p(s_t;\phi^{\bar c}_t,\psi_{t,0},r=\mathrm{opponent})\right).
-  \]
-  \item 两份长期状态的版本号各自递增；当前手短期状态与全部搜索树销毁。下一手重新从 $\searchinit$ 创建短期状态。
+  \item 从 $\searchinit$ 创建 $\psi_{t,0}$，固定 $(\phi_t^c,\psi_{t,0})$ 顺序执行 32 次 warm PUCT；warm 根不加 Dirichlet 噪声。
+  \item 导出根加 Top-4 的只读 \code{SearchTrace}，汇总短期损失并得到 $\psi_{t,1}$。
+  \item 短期版本变化后清空 warm tree；不得复用旧先验、叶值、访问数或边 Q。
+  \item 固定 $(\phi_t^c,\psi_{t,1})$ 从空树执行 96 次 final PUCT。自博弈 final 根加入比例 0.25、$\alpha=0.03$ 的 Dirichlet 噪声；前 30 手按访问分布采样，之后选择最大访问动作。
+  \item 规则环境验证并提交 $a_t$。提交成功后，使用未适应短期初始化更新行棋方长期状态，并用公开动作更新观察方长期状态。
+  \item 保存本手两份 trace、动作、随机数边界和更新后状态哈希；销毁 $\psi_{t,1}$ 及全部搜索树。
 \end{enumerate}
+
+MCTS 只消费策略 prior 和标量价值。所有叶节点逐个 batch=1 评价，不使用批量叶合并、虚拟损失或树并行。非法动作先验为零，价值备份时必须翻转行棋方视角。
+
+\subsection{第一遍：无梯度自博弈}
+
+一盘自博弈从固定模型快照开始，直到终局前慢权重和两类初始化都不得改变。模型评价使用 eager mode 和 FP32；所有快状态更新只保留数值，不构造外层图。每个完整真实回合结束后原子保存未完成轨迹快照，内容包括动作历史、两份长期残差与动量、版本、随机数状态和已经产生的 trace。
+
+终局后把结果写入 \code{GameTrajectory} 并冻结该文件。轨迹必须携带模型参数哈希和配置哈希；哈希不一致时学习器拒绝回放，避免在已经变化的初始化上使用声称“同快照”的状态。
+
+\subsection{第二遍：顺序可微回放}
+
+学习器在外循环更新前从开局和同一模型快照重建规则状态及黑白长期状态。对每个真实回合：
+
+\begin{enumerate}
+  \item 用动作路径重建 warm 节点，顺序计算短期写入损失并执行一次精确二阶更新；
+  \item 用适应后的 $\psi_{t,1}$ 在真实根局面评价 $(p_t^+,v_t^+)$，但不重跑 MCTS；
+  \item 以存储的 final 策略和终局结果计算
+  \[
+    \mathcal L_t
+    =\operatorname{CE}(\pi_t^F,p_t^+)+(z_t-v_t^+)^2;
+  \]
+  \item 对 $\mathcal L_t/T$ 立即反向并释放本手短期图，其中 $T$ 为该局真实手数；
+  \item 用停止梯度的 final root 和实际动作重建两份长期数值更新，并核对与第一遍保存的状态哈希。
+\end{enumerate}
+
+整盘只累积参数梯度，不改变模型。全部回合通过后，外循环 AdamW 执行一次参数更新和一次全局梯度裁剪。权重衰减只由 AdamW 实现，不重复加入 $\mathcal L_t$。MVP 不使用 replay buffer，也不跨多盘累积外循环梯度。
 
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[
-  node distance=8mm and 6mm,
+  node distance=9mm and 7mm,
   box/.style={draw=Primary,rounded corners,fill=SoftBlue,align=center,
-              minimum height=10mm,text width=25mm,font=\small},
+              minimum height=11mm,text width=31mm,font=\small},
   private/.style={draw=Accent,rounded corners,fill=SoftOrange,align=center,
-                  minimum height=10mm,text width=25mm,font=\small},
+                  minimum height=11mm,text width=31mm,font=\small},
   arrow/.style={-{Latex[length=2.2mm]},thick,color=Primary},
   dashedarrow/.style={-{Latex[length=2.2mm]},thick,dashed,color=Accent}
 ]
-  \node[box] (state) {真实状态 $s_t$\\长期状态 $\phi^c_t$};
-  \node[box,right=of state] (warm) {短期初始化\\warm MCTS 64};
-  \node[private,right=of warm] (adapt) {Top-8 写入集\\更新 $\psi_{t,1}$};
-  \node[box,right=of adapt] (final) {清树后\\final MCTS};
-  \node[box,right=of final] (commit) {得到 $\pi^F,Q^F$\\提交 $a_t$};
-  \node[private,below=of adapt] (game) {用短期初始化\\蒸馏长期块};
-  \node[private,below=of final] (observer) {观察方只用\\公开动作更新};
-  \node[box,below=of commit] (drop) {丢弃短期状态\\清空搜索树};
+  \node[box] (snapshot) {冻结模型快照};
+  \node[box,right=of snapshot] (selfplay) {第一遍：无梯度\\顺序自博弈};
+  \node[private,right=of selfplay] (trajectory) {持久化完整轨迹\\与终局结果};
+  \node[box,below=of trajectory] (replay) {第二遍：从开局\\顺序可微回放};
+  \node[private,left=of replay] (grad) {逐手反向并释放图\\核对状态哈希};
+  \node[box,left=of grad] (step) {整盘一次\\AdamW 更新};
 
-  \draw[arrow] (state) -- (warm);
-  \draw[arrow] (warm) -- (adapt);
-  \draw[arrow] (adapt) -- (final);
-  \draw[arrow] (final) -- (commit);
-  \draw[dashedarrow] (commit) -- (game);
-  \draw[dashedarrow] (commit) -- (observer);
-  \draw[arrow] (commit) -- (drop);
+  \draw[arrow] (snapshot) -- (selfplay);
+  \draw[arrow] (selfplay) -- (trajectory);
+  \draw[arrow] (trajectory) -- (replay);
+  \draw[arrow] (replay) -- (grad);
+  \draw[arrow] (grad) -- (step);
+  \draw[dashedarrow] (step) -- node[left,font=\scriptsize]{下一盘新快照} (snapshot);
 \end{tikzpicture}
-\caption{双时间尺度真实回合。短期块从 warm tree 学习并服务 final 搜索；长期块只蒸馏 final root，观察方只接收公开动作。}
-\label{fig:turn-protocol}
+\caption{同一模型快照的两遍顺序训练。搜索只在第一遍执行，第二遍复用停止梯度轨迹。}
+\label{fig:two-pass}
 \end{figure}
 
-\section{训练目标与元学习}
+\section{搜索档位与计算预算}
 
-\subsection{内循环}
+\begin{center}
+\begin{tabularx}{0.93\textwidth}{>{\bfseries}lcccX}
+\toprule
+档位 & 模型 & warm & final & 用途 \\
+\midrule
+tiny/debug & 4$\times$96 & 4 & 8 & CPU 测试、规则测试和恢复冒烟；不评价监督质量。 \\
+MVP & 6$\times$192 & 32 & 96 & 单卡完整机制闭环和正式验收。 \\
+研究档 & 8$\times$256 & 64 & 256 & MVP 完成后的人工实验；不进入默认命令。 \\
+\bottomrule
+\end{tabularx}
+\end{center}
 
-记 $\rho$ 为 Huber 损失，节点权重为
-\[
-  \omega_u=\frac{N_u}{\sum_{v\in\mathcal{D}^{\mathrm{warm}}_t}N_v}.
-\]
-短期写入损失为
-\[
-\begin{aligned}
-  \ell^{\mathrm{search}}_t
-  =\sum_{u\in\mathcal{D}^{\mathrm{warm}}_t}\omega_u\Bigg[
-    &\operatorname{CE}(\pi_u,p_u)
-    +\lambda_q\!\sum_{a:N_u(a)>0}\!\pi_u(a)\rho(q_u(a)-Q_u(a))\\
-    &+\lambda_s\rho(v_u-V_u)\Bigg],
-\end{aligned}
-\]
-并执行一次无动量 SGD：
-\[
-  \psi_{t,1}
-  =\psi_{t,0}-\eta_{\mathrm{search}}
-    \nabla_{\psi_{t,0}}\ell^{\mathrm{search}}_t.
-\]
-多个节点保持 batch size 为 1，顺序累积到同一个平均损失后才更新，不能逐节点改变短期参数。
+原方案的 800 次 final 搜索不再出现于 MVP 配置。所有档位的 warm 预算都是额外开销，不从 final 预算中扣除。日志记录每手实际模拟数、网络评价数、搜索耗时、短期写入耗时和回放耗时，但这些性能值不作为完成门槛。
 
-final 搜索结束并提交真实动作后，以短期初始化重新前向根局面，得到 $(p^0_t,q^0_t,v^0_t)$。行棋方长期写入损失为
-\[
-\begin{aligned}
-  \ell^{\mathrm{game,self}}_t
-  ={}&\operatorname{CE}(\pi^F_t,p^0_t)
-  +\lambda_q\!\sum_{a:N^F_t(a)>0}\!\pi^F_t(a)
-       \rho(q^0_t(a)-Q^F_t(a))\\
-  &+\lambda_g\rho(v^0_t-V^F_t),
-\end{aligned}
-\]
-随后只更新 $\phi^c_t$：
-\[
-  \phi^c_{t+1}=\phi^c_t-\eta_{\mathrm{game}}
-    \nabla_{\phi^c_t}\ell^{\mathrm{game,self}}_t.
-\]
-观察方使用真实动作的 $\ell^{\mathrm{obs}}_t$ 更新 $\phi^{\bar c}_t$，不产生 Q 或搜索价值损失。$\eta_{\mathrm{search}}$、$\eta_{\mathrm{game}}$ 及各损失权重都是显式配置；本文档不预设未经实验验证的数值。
+\section{监督预训练与数据边界}
 
-训练时使用 \code{torch.autograd.grad} 并设置 \code{create\_graph=True}，从而保留二阶梯度。运行时参数字典通过 \code{functional\_call} 传入模型\cite{pytorch-functional,pytorch-autograd}。每次内循环都使用参数白名单：短期写入只能更新短期自适应 FFN，长期写入只能更新对应玩家的长期自适应 FFN。
+监督阶段只训练静态策略--价值基线，不执行短期或长期内循环，$\gameinit$ 与 $\searchinit$ 保持零并冻结。这样先得到可用的标准 AlphaZero 网络，再单独调试 TTT 闭环，避免把数据解析、在线状态和高阶梯度同时引入。
 
-\subsection{外循环}
-
-在轨迹的每个真实状态上，以适应后的 $\psi_{t,1}$ 评价当前行棋方。记网络在 final 搜索前的输出为 $(p^+_t,q^+_t,v^+_t)$，则
-\[
-\begin{aligned}
-  \mathcal{L}_t
-  ={}&w_t\operatorname{CE}(\pi^F_t,p^+_t)
-    +\lambda_Q\!\sum_{a:N^F_t(a)>0}\!\pi^F_t(a)
-       \rho(q^+_t(a)-Q^F_t(a))\\
-    &+\lambda_v(z-v^+_t)^2
-    +\lambda_2\lVert\theta\rVert_2^2.
-\end{aligned}
-\]
-其中 $z$ 是终局结果，$w_t$ 依据 final MCTS 的实际访问数得到。$\pi^F_t$、$Q^F_t$、$z$、节点选择和动作均停止梯度。当前回合的 $\mathcal{L}_t$ 穿过短期更新，为 $\searchinit$ 提供“更新后搜索更好”的信用；长期更新是否有效，则通过后续回合中该玩家成为行棋方时的损失获得信用。
-
-外循环更新共享慢权重、$\gameinit$ 和 $\searchinit$。一盘棋结束后的 $\phi^B$、$\phi^W$ 不写回模型参数；下一条训练序列重新从更新后的长期初始化派生两份状态。短期状态从不跨真实回合进入下一次前向。
-
-\section{显存控制、梯度截断与恢复}
-
-\subsection{16 手截断元梯度}
-
-整盘 19 路围棋可能包含数百次长期快权重更新。若保留全部二阶计算图，显存会随手数增长，不适合作为默认实现。项目固定使用 16 个真实回合作为长期元梯度窗口。短期图只覆盖当手的 warm 更新与 final 外层损失，在当手结束后释放，不计入跨手窗口。
-
-在窗口边界保留长期快权重的数值，但截断旧图，并以直通方式重新连接长期初始化：
-\[
-  \phi_{\mathrm{next}}
-    =\gameinit+\stopgrad\!\left(\phi_{\mathrm{carried}}-\gameinit\right).
-\]
-该式前向值等于 $\phi_{\mathrm{carried}}$，因此长期记忆不会数值重置；反向只传播最近 16 手，并把边界梯度近似路由到长期初始化。$\searchinit$ 每手天然重新进入计算图，不使用该重锚定。本文档将长期方法明确标记为截断元梯度近似，而非整盘精确二阶求导。
-
-\subsection{Activation Checkpoint}
-
-每个 Transformer 块使用 PyTorch 的 \code{checkpoint} 函数，且显式设置 \code{use\_reentrant=False}。非重入实现会记录前向 autograd 图，支持 \code{autograd.grad} 和嵌套参数结构，适合本项目的高阶梯度\cite{pytorch-checkpoint}。它通过反向时重算前向降低激活显存，因此预期会增加训练时间。
-
-dropout 固定为零，检查点区域不得依赖会在重算时变化的全局状态。实现完成后必须比较开启和关闭 activation checkpoint 时的策略、标量价值、逐动作 Q、一阶梯度及二阶梯度。
-
-\subsection{暂不编译模型}
-
-MVP 固定使用 PyTorch eager mode，不启用 \code{torch.compile}、TorchScript 或 ONNX。原因不是编译在理论上不可行，而是动态参数字典、\code{create\_graph=True}、变长回合、Python 控制流和检查点重算容易引发 graph break、守卫失效或重复编译\cite{pytorch-compile}，会显著增加调试面。
-
-未来若确有需要，只考虑单独编译无 TTT 更新的纯前向推理函数；启用前必须与 eager mode 做策略、标量价值、逐动作 Q、一阶梯度和搜索结果的一致性验证。
-
-\subsection{持久化检查点}
-
-学习器只在 16 手窗口边界或完整梯度累积边界保存，不序列化 autograd 图。标准训练检查点包含：
-
-\begin{itemize}
-  \item 模型慢权重、$\gameinit$ 与 $\searchinit$；
-  \item 外循环优化器与学习率调度器状态；
-  \item Python、NumPy、CPU 和 CUDA 随机数状态；
-  \item 数据游标、全局训练步、已完成累积数；
-  \item 配置文件、代码版本和数据清单的哈希。
-\end{itemize}
-
-若需要恢复一盘未结束的自博弈，另存动作历史、八局面缓存、$\phi^B$、$\phi^W$、双方长期版本和随机数状态。短期状态、\code{SearchTrace} 与 MCTS 树不进入检查点；保存边界固定在完整真实回合之后。恢复后从当前回合开头重新创建 $\psi_{t,0}$ 并重跑 warm/final 搜索。若训练在 16 手窗口内部中断，恢复时从最近窗口边界重放最多 16 手。
-
-\section{监督预训练数据}
-
-\subsection{数据来源}
-
-监督预训练优先采用 KataGo g104 公共自博弈数据。该数据目录在 CC0 下发布，包含拼接 SGF、训练 NPZ、MCTS 策略访问目标、终局结果和棋局标识\cite{katago-g104,katago-license}。它主要采用面积计分，与 MVP 规则方向一致。
-
-数据下载必须使用显式清单记录来源 URL、文件大小、校验和和许可证；不得把数据打包进 Git 或 Docker 镜像。预处理固定执行：
+数据优先取 KataGo g104 的小规模 SGF 子集\cite{katago-g104,katago-license}。MVP 预处理步骤固定为：
 
 \begin{enumerate}
-  \item 过滤 19$\times$19、面积计分、普通自博弈样本；
-  \item 按棋局标识和手数排序，并把不连续位置切分为独立序列；
-  \item 从连续状态重建项目所需的八局面输入；
-  \item 优先把 MCTS 访问次数归一化为 $\pi_t$，缺失时退化为实际动作 one-hot；
-  \item 若样本没有逐动作搜索 Q，则显式关闭该样本的 Q 损失，不以终局结果伪造边 Q；
-  \item 为整条序列采样同一个八重对称变换，确保棋盘历史、动作、访问分布和合法掩码一致；
-  \item 逐条序列输出，保持 batch size 为 1。
+  \item 过滤 19$\times$19、面积计分、普通自博弈棋局，并记录来源、大小、校验和和 CC0 许可证；
+  \item 从动作序列重建 17 平面输入、合法掩码和当前行棋方视角终局结果；
+  \item 默认以实际动作 one-hot 作为策略目标；只有来源字段和语义经过测试确认时才使用软访问分布；
+  \item 对整盘棋统一采样同一个八重对称变换，保持局面、动作和合法掩码一致；
+  \item 每次只读取一个位置并执行 batch-size-1 前向，允许顺序累积 32 个位置后更新一次静态模型。
 \end{enumerate}
 
-\subsection{预训练顺序}
+缺失逐动作搜索 Q 不再需要特殊处理，因为 MVP 没有 Q 头。监督预训练完成后冻结一个 baseline 检查点；TTT 自博弈阶段从该检查点启用两份零初始化残差并开始外循环学习。
 
-每条监督序列开始时，从 $\gameinit$ 创建黑白两份私有长期状态，然后按真实手顺重放。存在根搜索分布时，行棋方使用该分布更新长期块；观察方始终只使用公开动作。终局结果用于外层价值目标。
+\section{显存、数值与恢复策略}
 
-监督阶段\textbf{不执行短期内循环}，因为现有数据不包含与在线协议匹配的 warm tree 内部节点及边 Q。短期块仍参与普通前向，$\searchinit$ 仍由外层损失学习一个可用初始化；完整的 warm 更新、更新后评价和逐动作 Q 监督从自博弈阶段启用。不得用同一份离线根标签同时充当 warm 和 final 目标。
+\subsection{显存控制}
 
-允许顺序处理 8 条序列后再执行一次外循环优化器更新，以梯度累积改善稳定性。任意时刻内存中只有当前序列的两份长期运行时状态，不构造多样本 TTT batch。
+短期更新是唯一使用 \code{create\_graph=True} 的路径，并且只覆盖当前手。Transformer 块在学习回放中使用
+\code{torch.utils.checkpoint.checkpoint(..., use\_reentrant=False)}，以支持 \code{autograd.grad} 和嵌套参数结构\cite{pytorch-checkpoint,pytorch-autograd}。dropout 固定为零，检查点区域不得读取会在重算时变化的全局状态。
 
-\section{MCTS 与自博弈设置}
+默认禁用混合精度、\code{torch.compile}、TorchScript、自定义 CUDA kernel 和图捕获。参数、快状态、动量、损失和梯度均为 FP32。每个正式命令在开始前重置 CUDA 峰值显存统计，结束后读取 \code{max\_memory\_allocated}；MVP 配置要求峰值低于 15\,GiB。
 
-\subsection{搜索基线}
+\subsection{检查点和故障恢复}
 
-MVP 使用 PUCT。每个真实回合先执行固定 64 次、不加 Dirichlet 噪声的 warm MCTS；短期更新并清树后，再执行 final MCTS。final 根节点在自博弈中加入比例 0.25、$\alpha=0.03$ 的 Dirichlet 噪声。前 30 手按 final 访问分布采样，之后选择 final 访问次数最大的动作。认输关闭，确保每盘棋产生真实终局目标。
+模型检查点只在整盘回放成功且 AdamW 步骤完成后保存，包含慢权重、两类初始化、优化器、调度器、全局步数、配置/代码/数据哈希及 Python、NumPy、CPU、CUDA 随机数状态。
 
-搜索过程必须满足：
+未完成自博弈在每个完整回合后原子保存动作历史、双方长期残差与动量、版本、随机数状态和已完成 trace。短期状态和 MCTS 树不进入快照；恢复时从当前回合开头重跑 warm/final 搜索。
 
-\begin{itemize}
-  \item warm 与 final 各自的单次搜索内，长期和短期权重版本固定；
-  \item 非法动作的先验概率为零；
-  \item 叶节点只使用策略 prior 与标量价值；模型逐动作 Q 头不得用于 PUCT 选择、边初始化或备份；
-  \item 备份价值时正确翻转行棋方视角；
-  \item \code{SearchTrace} 保存根及筛选内部节点的状态、访问分布、已访问边 Q、节点价值和访问数，并整体停止梯度；
-  \item 短期更新后必须丢弃 warm tree；真实落子和长期更新后必须丢弃 final tree。
-\end{itemize}
+学习回放不保存部分 autograd 图，也不在中途更新模型。若回放崩溃，直接从已完成的棋局轨迹开头重跑；由于模型尚未更新，这一选择比序列化高阶图更简单且确定。
 
-\subsection{模拟次数随机化}
+\section{工程组织与固定环境}
 
-warm 预算恒为额外的 64 次模拟，不从 final 预算中扣除。为降低自博弈平均成本并保留部分高质量策略目标，每个真实回合独立选择 final 搜索预算：
+建议实现模块边界如下：
 
-\begin{itemize}
-  \item 75\% 的回合使用 128 次快速搜索；
-  \item 25\% 的回合使用 800 次完整搜索。
-\end{itemize}
-
-两类回合都执行相同的 warm 更新与长期蒸馏。外循环策略损失按 final 实际访问数相对完整预算加权，避免少量访问产生的尖锐分布与完整搜索拥有相同监督强度。固定 warm 阶段使短期适应数据分布不随 final 档位变化；代价是平均搜索模拟数约增加两成，尚未计入短期反向传播成本。final 随机预算思路参考 KataGo 的 playout cap randomization\cite{katago-methods}，但 MVP 不加入其余复杂搜索启发式。
-
-\clearpage
-\section{工程组织与容器化}
-
-建议实现阶段采用以下模块边界：
-
-\begin{longtable}{>{\bfseries\color{Primary}}p{0.21\textwidth}p{0.71\textwidth}}
+\begin{longtable}{>{\bfseries\color{Primary}}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.70\textwidth}}
 \toprule
 子系统 & 职责 \\
 \midrule
-规则适配层 & 不可变围棋状态、合法动作、八局面历史、视角转换与终局结果 \\
-模型层 & Transformer、策略/标量价值/逐动作 Q 头、两类快权重初始化与函数式前向 \\
-记忆控制器 & 创建黑白长期状态和每手短期状态、参数白名单更新、版本管理与 16 手重锚定 \\
-MCTS & PUCT、warm 与 final 两阶段搜索、根噪声、随机 final 预算、\code{SearchTrace} 和树生命周期 \\
-数据层 & g104 下载清单、连续序列重建、对称增强与 batch=1 流式读取 \\
-学习器 & 监督预训练、外循环损失、梯度累积、activation checkpoint 和恢复 \\
-自博弈器 & 双私有长期记忆、单手短期适应、final-root 蒸馏、轨迹写入与未完成棋局快照 \\
+规则适配层 & 不可变 19 路状态、17 平面历史、合法动作、坐标/对称转换和终局视角 \\
+模型层 & 6 块空间 Transformer、策略/价值头、两个残差 down-projection 插槽和函数式前向 \\
+记忆控制器 & 黑白长期残差与动量、每手短期残差、白名单、裁剪、版本和直通重锚定 \\
+MCTS & 顺序 PUCT、32/96 两阶段搜索、根噪声、trace 导出和强制清树 \\
+轨迹层 & 动作路径形式的 \code{SearchTrace}、\code{GameTrajectory}、哈希和原子写入 \\
+学习器 & 同快照回放、短期二阶、长期一阶直通、逐手反向和整盘一次 AdamW \\
+数据层 & g104 SGF 小子集、17 平面重建、对称增强和 batch=1 流式读取 \\
+恢复层 & 完整回合快照、整盘模型检查点、随机数恢复和确定性重放 \\
 \bottomrule
 \end{longtable}
 
-Docker 以 Linux、Python 3.12、PyTorch 2.13、CUDA 12.8 和单张 NVIDIA GPU 为参考环境。数据、日志和检查点全部通过 volume 挂载。容器至少提供以下独立命令入口：规则测试、数据预处理、监督预训练、自博弈、AlphaZero 学习器和检查点恢复。
+参考环境固定为 Linux Docker、Python 3.12、PyTorch 2.11.0 的 CUDA 12.8 wheel\cite{pytorch211}、PettingZoo 1.26.1\cite{pettingzoo-version}。依赖通过 \code{pyproject.toml} 和 \code{uv.lock} 精确锁定，数据、轨迹、日志和检查点均通过 volume 挂载。CPU 只要求运行规则、数据、tiny 模型和小规模高阶梯度测试。
 
-本地 CPU 路径只要求能运行规则测试、数据测试、小模型前向、一阶梯度和小规模二阶梯度，不承诺完成 19 路训练。
+\section{实施冲刺}
 
-\section{敏捷开发冲刺}
-
-\begin{longtable}{>{\bfseries}p{0.10\textwidth}p{0.20\textwidth}p{0.60\textwidth}}
+\begin{longtable}{>{\bfseries}p{0.10\textwidth}p{0.21\textwidth}>{\raggedright\arraybackslash}p{0.59\textwidth}}
 \toprule
 冲刺 & 主题 & 完成定义 \\
 \midrule
-0 & 规则与可微性 & 完成 19 路规则适配、17 平面编码、长期/短期初始化、双长期加单短期状态、标准注意力双反向和非重入 activation checkpoint 最小验证。 \\
-1 & 序列数据 & 完成 g104 数据清单、许可证记录、连续序列重建、缺失 Q 掩码、整序列对称增强、batch=1 加载和梯度累积；监督阶段不执行短期内循环。 \\
-2 & 标准 AlphaZero & 完成策略、标量价值和辅助 Q 输出，PUCT 只消费前两者；完成根噪声、final 预算随机化、自博弈轨迹和一盘完整 19 路对局。 \\
-3 & 双时间尺度 TTT & 完成 warm 64、Top-8 \code{SearchTrace}、短期更新、清树 final 搜索、final-root 长期蒸馏、观察方公开动作更新和 16 手长期截断。 \\
-4 & 恢复与容器化 & 完成学习器检查点、未完成棋局恢复、Docker CPU/GPU 命令及端到端冒烟测试。 \\
-未来 & 非 MVP & 前端、后端、棋盘可视化、多 GPU、batch$>1$、模型编译、低秩快权重、消融实验、参数搜索和 Elo/性能分析。 \\
+0 & 规则与环境 & 锁定依赖；完成 19 路状态、17 平面、合法掩码、对称、终局视角及 tiny CPU 测试。 \\
+1 & 静态基线 & 完成 6$\times$192 策略--价值网络、g104 SGF 小子集、batch=1 监督预训练和 checkpoint。 \\
+2 & 顺序 PUCT & 完成无 TTT 的 debug/MVP 搜索、一盘 19 路对局、根噪声、动作采样和树版本测试。 \\
+3 & 快状态 & 完成残差 down-projection、短期单步二阶、长期动量/遗忘、一阶直通和黑白隔离。 \\
+4 & 两遍闭环 & 完成 32+96 自博弈、可序列化 trace、同快照回放、状态哈希一致和整盘一次 AdamW。 \\
+5 & 恢复与容器 & 完成回合边界恢复、回放重启、Docker CPU/GPU 冒烟及低于 15\,GiB 的显存验收。 \\
+未来 & 非 MVP & Q 头、800 搜索、精确长期二阶、完整自适应 FFN、Muon/Omega、低秩和所有并行方案。 \\
 \bottomrule
 \end{longtable}
 
 \section{测试与验收标准}
 
-\subsection{规则与数据正确性}
+\subsection{规则、数据和静态模型}
 
 \begin{itemize}
-  \item 固定棋谱覆盖单子与多子提取、打劫、禁入点、停着、连续双停和终局计分；
-  \item 动作编号、SGF 坐标、策略索引和八重对称变换可逆；
-  \item 八局面输入在提子、停着和开局补零时正确；
-  \item 所有训练样本 batch 维度严格等于 1；同一序列只使用一个对称变换。
+  \item 固定棋谱覆盖单子/多子提取、打劫、禁入点、停着、连续双停和面积计分；
+  \item 动作编号、SGF 坐标和八重对称可逆，17 平面在提子、停着和开局补零时正确；
+  \item 所有入口断言 batch 维度为 1，模型只返回策略 logits 和标量价值；
+  \item 静态监督预训练期间两份快权重初始化保持零且无梯度。
 \end{itemize}
 
-\subsection{双初始化、生命周期与隐私}
+\subsection{状态、更新和元梯度}
 
 \begin{itemize}
-  \item 模型参数和普通检查点中各有一份 $\gameinit$ 与 $\searchinit$，不存在按黑白复制的可训练初始化；
-  \item 每盘开始时 $\phi^B_0$ 与 $\phi^W_0$ 数值相同，但存储和后续更新相互独立；
-  \item 每手 $\psi_{t,0}$ 都等于 $\searchinit$；warm 后只有短期块变化，长期块与慢权重数值不变；
-  \item final 搜索使用 $\psi_{t,1}$，warm tree 已清空，逐动作 Q 头的任意改变不得影响 PUCT 搜索结果；
-  \item 长期蒸馏使用 $\psi_{t,0}$ 而非 $\psi_{t,1}$，只改变行棋方长期块，不复制短期参数；
-  \item 观察方更新结果只依赖公开状态和实际动作；任意改变对方私有 $\pi^F_t$、$Q^F_t$ 或 warm trace 均不得影响观察方更新；
-  \item 非法动作与未访问边没有 Q 梯度；短期状态销毁后，下一手前向不能引用其存储或 autograd 图；
-  \item 每次状态版本变化后旧树为空，搜索节点版本与长期/短期参数版本不存在混用。
+  \item $\phi^B_0$ 与 $\phi^W_0$ 数值相同但存储独立；更新任一方不会改变另一方；
+  \item warm 后只改变短期残差；下一手 $\psi_{t,0}$ 再次等于 $\searchinit$；
+  \item 长期更新只改变目标玩家的残差、动量和版本，不改变慢权重或短期状态；
+  \item 改变对方私有 warm/final trace 不影响观察方更新；
+  \item 有限差分和 tiny 模型验证短期外层损失对 $\searchinit$ 的二阶元梯度有限且非零；
+  \item 验证长期外层损失对 $\gameinit$ 的直通梯度有限且非零，并确认长期状态没有跨回合 \code{grad\_fn}；
+  \item activation checkpoint 开关前后的输出、一阶梯度和短期二阶梯度在规定容差内一致。
 \end{itemize}
 
-\subsection{梯度、截断与恢复}
+\subsection{搜索、两遍一致性和恢复}
 
 \begin{itemize}
-  \item 当前回合 final 外层损失对 $\searchinit$ 产生有限、非零的元梯度；行棋方未来回合损失对 $\gameinit$ 产生有限、非零的元梯度；
-  \item activation checkpoint 开关前后的策略、标量价值、逐动作 Q、一阶梯度和二阶梯度在规定容差内一致；
-  \item 16 手边界前后长期状态前向数值连续，旧长期 autograd 图已释放；短期图不跨边界；
-  \item warm 写入集只有根或不足 8 个内部节点时仍可完成一次归一化更新；多个节点始终顺序执行 batch-size-1 前向；
-  \item 可完成 batch=1 监督更新和 8 序列梯度累积；
-  \item 学习器恢复后下一窗口结果与无中断运行一致；未完成棋局恢复后不恢复短期状态，并从该回合开头重跑 warm/final 搜索；
-  \item Docker CPU 冒烟测试和单卡 CUDA 冒烟测试通过。
+  \item warm 与 final 搜索内权重版本固定；任何状态更新后旧树均为空；
+  \item warm trace 只有根或不足 4 个内部节点时仍可完成一次归一化短期更新；
+  \item 完成一盘 19 路 debug 对局和一盘默认 32+96 对局，不使用批量叶评价；
+  \item 对同一快照，第一遍与第二遍每手长期残差、动量及版本哈希一致；
+  \item 完整回放能产生有限外层损失并只在整盘结束执行一次 AdamW；
+  \item 回合快照恢复后从当前手开头重跑搜索，结果与相同随机状态的无中断运行一致；
+  \item 回放中断后从完整轨迹开头重跑，模型更新结果与无中断回放一致；
+  \item 默认配置 \code{max\_memory\_allocated} 低于 15\,GiB，Docker CPU/GPU 冒烟通过。
 \end{itemize}
-
-项目最终以机制正确、训练闭环可运行、检查点可恢复和设备可迁移为完成标准，不以 Elo、吞吐率、训练时长或相对基线提升作为验收指标。
 
 \section{风险与明确不做的事项}
 
 \begin{itemize}
-  \item \textbf{二阶显存仍可能过高：}先缩小调试模型验证正确性；正式配置使用 16 手截断与逐块 activation checkpoint，不在 MVP 中改成一阶近似。
-  \item \textbf{两阶段搜索增加成本：}warm 固定额外 64 次且更新后必须清树；该开销是验证单手适应机制的明确代价，不通过复用旧统计降低正确性。
-  \item \textbf{搜索自蒸馏可能放大偏差：}warm/final 统计全部停止梯度，短期只从较弱 warm 目标更新，当前回合由更强 final 搜索评价；不得让预测 Q 直接进入 PUCT 形成反馈环。
-  \item \textbf{内部节点监督可能噪声过高：}只选择访问数至少 8 的 Top-8 内部节点，并按访问数加权；不足时退化为根节点，不补造目标。
-  \item \textbf{观察方更新可能带来目标冲突：}通过 \code{memory\_role} 显式区分自身策略和对手建模；不通过新增消融实验解决。
-  \item \textbf{监督数据与短期协议不匹配：}监督阶段不做短期更新；缺失逐动作 Q 时掩码，不用同一根标签伪造 warm/final 对。
-  \item \textbf{共享初始化不等于共享运行时记忆：}参数量只计算一份长期和一份短期初始化，但对局中仍保留两份已经分化的长期状态及一份当手临时状态。
+  \item \textbf{batch=1 吞吐率低：}这是减少状态管理和并行正确性风险的主动选择；耗时只记录，不作为验收失败。
+  \item \textbf{两遍流程增加重算：}第二遍不重跑 MCTS，只重建网络前向和快状态；换取终局目标可用、图及时释放和确定恢复。
+  \item \textbf{长期梯度是近似：}直通重锚定忽略更新器的 Hessian 和跨手 Jacobian，文档不把它称为整盘精确元梯度。
+  \item \textbf{搜索监督可能自我强化：}warm/final 统计全部停止梯度，预测价值不直接初始化边 Q；是否提升棋力保持为开放问题。
+  \item \textbf{固定更新器可能不最优：}0.1/0.01 学习率、0.9 动量和 0.999 保留率仅为可复现工程默认值，不安排搜索或消融。
+  \item \textbf{规则依赖风险：}固定 PettingZoo 包版本，并用独立棋谱测试覆盖适配层，不把第三方对象直接写入轨迹。
 \end{itemize}
 
-明确不属于当前范围的内容包括：多 batch 快权重管理、分布式多 GPU、自动超参数搜索、消融实验、性能基准、棋力评级、前端、后端服务、棋盘可视化、模型编译和低秩快权重压缩。
+明确不属于 MVP 的内容包括：辅助逐动作 Q 头、800 次搜索、长期精确二阶、完整自适应 FFN、Muon、Newton--Schulz、Omega 规则、数据依赖遗忘、快权重 L2 归一化、低秩压缩、混合精度、模型编译、自定义 kernel、并行棋局、批量叶节点、DDP/FSDP、序列/上下文/张量/流水线并行、异步 actor/learner、replay buffer、自动超参数搜索、消融、性能基准、Elo、前端和后端服务。
 
 \section{推荐实施顺序}
 
-首先用小模型完成两个自适应块的参数白名单、长期/短期生命周期，以及两条独立元梯度路径：同手 final loss 指向 $\searchinit$，未来回合 loss 指向 $\gameinit$。随后接入完整 19 路 Transformer 与三个输出头，确认辅助 Q 不影响标准 PUCT。
+首先建立不含 TTT 的可靠基线：规则、输入、策略--价值网络、SGF 小子集和顺序 PUCT。随后在 tiny 模型上只实现一个残差 down-projection，分别验证短期精确二阶和长期一阶直通，再扩展到黑白双长期状态及状态版本。
 
-在标准 AlphaZero 回合正确后，先让 MCTS 导出只读 \code{SearchTrace}，再加入 warm 64、短期更新、强制清树和 final 搜索。短期闭环稳定后，加入使用短期初始化的 final-root 长期蒸馏及观察方公开动作更新。最后接入监督序列、16 手长期截断、持久化检查点和 Docker。
-
-这一顺序把最高风险的四个问题---规则正确性、两类状态的写入边界、搜索缓存失效和高阶梯度可用性---放在项目早期验证，同时保留一个始终可运行的标准 AlphaZero 基线。基线用于工程回退和故障定位，不用于正式消融或性能比较。
+快状态单元测试通过后，先实现第一遍无梯度自博弈和动作路径 trace，再实现不重跑搜索的第二遍回放。两遍逐手状态哈希完全一致之后，才允许接入整盘一次 AdamW、回合快照、Docker 和默认 32+96 档位。研究档模型和所有高级更新器必须等待 MVP 的显存、恢复和确定性验收全部通过。
 
 \begin{thebibliography}{99}
 \small
@@ -558,27 +526,40 @@ Arnuv Tandon, Karan Dalal, Xinhao Li, et al.
 \newblock \emph{End-to-End Test-Time Training for Long Context}.
 \newblock 项目本地论文：\code{paper/End-to-End Test-Time Training for Long Context.pdf}.
 
+\bibitem{titans}
+Ali Behrouz, Peilin Zhong, Vahab Mirrokni.
+\newblock \emph{Titans: Learning to Memorize at Test Time}.
+\newblock 项目本地论文：\code{paper/Titans Learning to Memorize at Test Time.pdf}.
+
+\bibitem{atlas}
+Ali Behrouz, Zeman Li, Praneeth Kacham, et al.
+\newblock \emph{ATLAS: Learning to Optimally Memorize the Context at Test Time}.
+\newblock 项目本地论文：\code{paper/ATLAS Learning to Optimally Memorize the Context at Test Time.pdf}.
+
+\bibitem{lact}
+Tianyuan Zhang, Sai Bi, Yicong Hong, et al.
+\newblock \emph{Test-Time Training Done Right}.
+\newblock 项目本地论文：\code{paper/Test-Time Training Done Right.pdf}.
+
+\bibitem{inplace}
+Guhao Feng, Shengjie Luo, Kai Hua, et al.
+\newblock \emph{In-Place Test-Time Training}.
+\newblock 项目本地论文：\code{paper/In-Place Test-Time Training.pdf}.
+
 \bibitem{alphagozero}
 David Silver, Julian Schrittwieser, Karen Simonyan, et al.
 \newblock Mastering the Game of Go without Human Knowledge.
 \newblock \emph{Nature}, 550:354--359, 2017.
-\newblock \url{https://www.nature.com/articles/nature24270}
-
-\bibitem{alphazero}
-David Silver, Thomas Hubert, Julian Schrittwieser, et al.
-\newblock A General Reinforcement Learning Algorithm that Masters Chess, Shogi, and Go through Self-Play.
-\newblock \emph{Science}, 362:1140--1144, 2018.
-
-\bibitem{katago-methods}
-David J. Wu.
-\newblock Accelerating Self-Play Learning in Go.
-\newblock arXiv:1902.10565, 2020 revision.
-\newblock \url{https://arxiv.org/abs/1902.10565}
 
 \bibitem{pettingzoo-go}
 Farama Foundation.
 \newblock PettingZoo Go Environment, \code{go\_v5}.
-\newblock \url{https://pettingzoo.farama.org/main/_modules/pettingzoo/classic/go/go/}
+\newblock \url{https://pettingzoo.farama.org/environments/classic/go/}
+
+\bibitem{pettingzoo-version}
+Farama Foundation.
+\newblock PettingZoo 1.26.1 release.
+\newblock \url{https://pypi.org/project/pettingzoo/}
 
 \bibitem{katago-g104}
 KataGo Project.
@@ -590,10 +571,10 @@ KataGo Project and Jane Street.
 \newblock g104 Data License (CC0).
 \newblock \url{https://katagoarchive.org/g104/LICENSE.txt}
 
-\bibitem{pytorch-functional}
-PyTorch Contributors.
-\newblock \code{torch.func.functional\_call} Documentation.
-\newblock \url{https://docs.pytorch.org/docs/main/generated/torch.func.functional_call.html}
+\bibitem{pytorch211}
+PyTorch Foundation.
+\newblock PyTorch 2.11 Release Blog.
+\newblock \url{https://pytorch.org/blog/pytorch-2-11-release-blog/}
 
 \bibitem{pytorch-autograd}
 PyTorch Contributors.
@@ -604,11 +585,6 @@ PyTorch Contributors.
 PyTorch Contributors.
 \newblock Activation Checkpointing Documentation.
 \newblock \url{https://docs.pytorch.org/docs/stable/checkpoint.html}
-
-\bibitem{pytorch-compile}
-PyTorch Contributors.
-\newblock \code{torch.compile} Troubleshooting and Graph Breaks.
-\newblock \url{https://docs.pytorch.org/docs/main/user_guide/torch_compiler/torch.compiler_troubleshooting.html}
 
 \end{thebibliography}
 
