@@ -1,3 +1,6 @@
 [submodule "third_party/e2e"]
 	path = third_party/e2e
 	url = https://github.com/test-time-training/e2e.git
+[submodule "third_party/ttt-lm-pytorch"]
+	path = third_party/ttt-lm-pytorch
+	url = https://github.com/test-time-training/ttt-lm-pytorch.git
