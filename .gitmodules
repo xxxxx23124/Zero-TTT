@@ -4,3 +4,6 @@
 [submodule "third_party/ttt-lm-pytorch"]
 	path = third_party/ttt-lm-pytorch
 	url = https://github.com/test-time-training/ttt-lm-pytorch.git
+[submodule "third_party/In-Place-TTT"]
+	path = third_party/In-Place-TTT
+	url = https://github.com/ByteDance-Seed/In-Place-TTT.git
