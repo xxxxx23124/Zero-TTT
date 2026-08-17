@@ -1,0 +1,31 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zero-ttt:torch2.13.0-cuda13.2-cudnn9-devel
+    working_dir: /workspace
+    gpus: all
+    shm_size: 8gb
+    init: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+      - huggingface-cache:/cache/huggingface
+      - pip-cache:/cache/pip
+      - torch-cache:/cache/torch
+      - torch-extensions-cache:/cache/torch_extensions
+      - uv-cache:/cache/uv
+    environment:
+      PIP_CACHE_DIR: /cache/pip
+    command: ["/bin/bash"]
+
+volumes:
+  huggingface-cache:
+  pip-cache:
+  torch-cache:
+  torch-extensions-cache:
+  uv-cache:
