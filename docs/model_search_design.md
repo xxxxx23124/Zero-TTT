@@ -1,6 +1,6 @@
 # Zero-TTT 模型、训练与搜索设计
 
-> 状态：实现规格
+> 状态：核心参考实现已落地，生产 GPU 验收待完成
 >
 > 最近更新：2026-08-18
 
@@ -53,13 +53,13 @@
 | 主体 dropout | 0 |
 | 基础参数量 | 约 3.09 亿 |
 
-每个交叉点对应一个 token，另加一个全局 token，总序列长度为 362。逐点状态特征投影到棋盘 token；贴目、手数、连续 pass 等全局特征写入全局 token。输入和值目标始终采用当前行棋方视角。
+每个交叉点对应一个 token，另加一个全局 token，总序列长度为 362。全局 token 严格初始化为 `learned_cls + global_projection(global_features)`：只叠加贴目、手数、连续 pass 和当前方等不能从当前棋盘唯一恢复的全局特征，不加入棋盘均值、额外池化或绝对位置向量。输入和值目标始终采用当前行棋方视角。
 
 每层使用 Pre-RMSNorm、QK-Norm、无 bias 的主体线性投影和 SwiGLU。注意力与 FFN 的残差输出投影按 `1 / sqrt(2L)` 做深度缩放初始化，其中 `L=24`。网络内部不使用 dropout，也不在 checkpoint 区域内放置其他随机操作。
 
 ### 3.2 二维旋转位置编码
 
-Q、K 的 64 个每头通道平均分给行、列两个旋转子空间：前 32 维编码行坐标，后 32 维编码列坐标。361 个棋盘 token 使用坐标 `0..18`；全局 token 不旋转。二维 RoPE 只作用于 Q、K，不改变 V，也不额外加入学习式绝对位置向量。
+Q、K 的 64 个每头通道平均分给行、列两个旋转子空间：前 32 维编码行坐标，后 32 维编码列坐标。361 个棋盘 token 使用以天元为原点的 `-9..9` 行列坐标；全局 token 使用零坐标，因此旋转恒等。默认 `rope_base=100`、`rope_scale=1`，固定 FP32 频率按 `100^(-i/16)` 生成后再转换到计算 dtype。二维 RoPE 只作用于 Q、K，不改变 V，也不额外加入学习式绝对位置向量。
 
 ### 3.3 输出接口与损失
 
@@ -67,7 +67,7 @@ Q、K 的 64 个每头通道平均分给行、列两个旋转子空间：前 32 
 
 - `policy_logits[B, 362]`：361 个交叉点由对应 token 读出，`pass` 由全局 token 读出；合法动作掩码在 softmax 前应用。
 - `value[B, 1]`：当前行棋方视角的标量价值，由全局 token 读出。
-- `ownership_logits[B, 361]`：逐点归属辅助预测。
+- `ownership[B, 361]`：经 `tanh` 的逐点归属辅助预测。
 - `score_margin[B, 1]`：包含贴目的当前方视角目差辅助预测。
 
 默认损失权重为策略 `1.0`、价值 `1.0`、所有权 `0.15`、目差 `0.05`。所有权和目差都携带逐样本标签掩码；普通棋谱无法可靠产生某项标签时，该项不参与该样本的归一化损失，不能用伪造的零标签代替。辅助头不参与 MCTS 的第一版选择公式。
@@ -104,7 +104,7 @@ slow = beta * slow + (1 - beta) * fast
 一个推理进程只加载一份已发布模型，配套一个集中叶节点队列和一个共享的 16 线程 CPU 搜索池：
 
 - GTP 模式下，16 个线程共同服务当前根搜索。
-- 自博弈模式下，同一线程池可以调度多个棋局，但总搜索线程数仍为 16。
+- 当前分阶段自博弈按盘顺序执行；每盘搜索由同一棵树的 16 个 CPU 线程共享。未来可以在不改变协议的情况下调度多盘，但不是首版行为。
 - 队列按 `model_version` 分组，先去重相同状态，再组成最大 batch 16；GPU 返回后把结果分发给所有等待者。
 - 推理统一使用 `torch.inference_mode()`、BF16 和编译后的有限 batch 桶。
 
@@ -112,7 +112,7 @@ slow = beta * slow + (1 - beta) * fast
 
 ### 6.2 树复用与评价缓存
 
-真实落子后优先把对应子树提升为新根。置换节点和神经评价使用有容量上限的 LRU 缓存，但缓存命中必须保持规则语义：
+真实落子后优先把对应子树提升为新根。不同树节点保留独立访问统计，不构造共享备份语义的 DAG；只有不可变神经评价使用有容量上限的 LRU 缓存。缓存命中必须保持规则语义：
 
 - 键至少覆盖棋盘、当前方、规则、贴目、劫状态、超级劫历史语义和 `model_version`。
 - 哈希只用于定位；命中后仍比较完整状态身份，不能依赖哈希碰撞概率宣称相等。
@@ -141,7 +141,7 @@ Q_fpu = clip(Q_parent - 0.2 * sqrt(visited_prior_mass), -1, 1)
 | ---: | --- |
 | 256 | 归一化熵不高于 `0.35`，且头两名差距至少 `0.30` |
 | 512 | 领先动作与 256 次时相同，且头两名差距至少 `0.20` |
-| 768 | 256、512、768 三次检查的领先动作相同，且头两名差距至少 `0.10` |
+| 768 | 与 512 次相比领先动作连续两次不变，且头两名差距至少 `0.10` |
 | 1024 | 无条件停止 |
 
 每个样本记录实际搜索预算、各检查点统计和最终根访问次数。动态停止只改变计算预算，不改变访问分布到策略目标的归一化方式。
@@ -199,5 +199,6 @@ y = W_d h + gamma * A(c) (B(c) h) / sqrt(8)
 - [PyTorch SDPA 教程](https://docs.pytorch.org/tutorials/intermediate/scaled_dot_product_attention_tutorial.html)
 - [PyTorch activation checkpoint 文档](https://docs.pytorch.org/docs/stable/checkpoint.html)
 - [PyTorch `torch.compile` 文档](https://docs.pytorch.org/docs/stable/generated/torch.compile.html)
+- [RoPE-ViT](https://arxiv.org/abs/2403.13298)
 - [Accelerating Self-Play Learning in Go](https://arxiv.org/abs/1902.10565)
 - [KataGo 自博弈配置参考](https://github.com/lightvector/KataGo/blob/master/cpp/configs/training/selfplay1.cfg)

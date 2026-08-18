@@ -2,30 +2,41 @@
 
 Zero-TTT 是一个面向个人学习、实践和娱乐的围棋 AI 项目。
 
-项目近期目标是在标准 19×19 棋盘上完成一套 AlphaZero 风格的训练与对弈闭环：先使用许可清晰的开源棋谱预训练棋盘 Transformer，再逐步接入神经网络引导的 MCTS、自博弈训练、平滑权重发布和可供棋盘软件调用的 GTP 引擎。棋谱既可以来自人类对局，也可以来自开源程序的自博弈；如果数据包含 MCTS 访问分布或根价值等额外信息，项目会优先利用这些监督信号。
+项目近期目标是在标准 19×19 棋盘上完成一套 AlphaZero 风格的训练与对弈闭环。当前已经有 Python 参考实现打通围棋规则、棋盘 Transformer、批量 MCTS、自博弈、SQLite 回放、`fast` 训练、`slow` EMA 发布和恢复；开源棋谱预训练与 GTP 是后续独立阶段。
 
 这里不是严格的 AlphaZero 复现，也不以论文结论、排行榜成绩或最强棋力为目标。比起证明某个点子一定有效，项目更看重：能运行、能理解、能玩，并且方便随时加入一些有趣但未必成熟的实验。
 
 ## 当前状态
 
-- 项目处于文档整理和实现准备阶段，尚无正式训练代码。
+- 里程碑 1、4、5 的首版参考实现和里程碑 7 的默认关闭超网络分支已经进入 `src/zero_ttt/`。
 - 当前工程主线是 19×19 围棋 AlphaZero 风格基线。
 - 默认模型规格面向 RTX 4090 Laptop 16 GB：约 3.09 亿参数的 Transformer Encoder，训练物理 batch 为 16。
+- tiny 配置的“自博弈 → 回放 → 优化 → EMA → 发布 → 恢复”自动化测试已经通过；正式模型的 Linux/CUDA 编译显存验收仍需在目标 GPU 容器中执行。
 - 首个可玩成果计划提供 GTP v2 接口，可接入 Sabaki、q5Go 等棋盘软件。
 - 原有的 TTT / 神经快记忆方向已经暂停并归档，但没有被放弃；未来条件成熟时仍可能重新探索。
 
 ## 路线概览
 
-1. 实现并验证 19×19 围棋规则、状态表示、SGF/自博弈数据读取。
-2. 使用开源棋谱预训练 Transformer 策略—价值网络。
-3. 完成 PUCT MCTS、16 线程共享搜索、批量神经网络推理和确定性测试。
-4. 打通自博弈、滑动窗口经验回放、`fast` 训练、`slow` EMA 发布和 checkpoint 恢复。
+1. 已实现并测试 19×19 No-Suicide Tromp–Taylor 规则、状态与共享特征。
+2. 已实现棋盘 Transformer、Python PUCT MCTS 和单 GPU 分阶段自博弈训练闭环。
+3. 在目标 Linux GPU 容器完成正式 batch 16 的 compile/显存验收和小数据过拟合。
+4. 通过统一 `GameSource → GameRecord → ReplayStore` 边界接入许可清晰的开源棋谱并做监督预训练。
 5. 提供 GTP 引擎，完成实际人机对弈。
-6. 在不破坏标准基线的前提下加入完整低秩超网络等可关闭实验。
+6. 试验默认关闭的完整低秩超网络及后续可插拔点子。
 
 闭环不设置候选模型对冠军模型的竞技评估或晋升门槛。`fast` 权重接受梯度，`slow` 权重通过 EMA 跟随并用于自博弈、GTP 和发布；验证指标只用于暴露问题，不阻塞训练或触发自动回退。
 
 具体阶段、交付物和验收条件见[实施计划](docs/implementation_plan.md)，模型、训练和搜索参数见[模型与搜索设计](docs/model_search_design.md)。未经验证、允许频繁修改的想法单独记录在[实验点子](docs/ideas.md)中。
+
+## 本地验证
+
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest
+zero-ttt smoke --config configs/test.toml
+```
+
+`loop`、`selfplay` 和 `train` 同样只接受一个版本化 TOML 文件，不提供逐项命令行或环境变量覆盖。例如 `zero-ttt selfplay --config configs/test.toml` 会在 `runs/test/` 生成可恢复状态。正式长跑使用 `configs/rtx4090l.toml`。
 
 ## 文档
 
@@ -63,9 +74,11 @@ docker compose run --rm dev
 ```bash
 docker compose run --rm dev nvidia-smi
 docker compose run --rm dev python scripts/docker_smoke_test.py
+docker compose run --rm dev python -m pytest
+docker compose run --rm dev python scripts/model_smoke_test.py
 ```
 
-冒烟测试会检查源码挂载、NVCC、PyTorch/CUDA/cuDNN 版本、GPU 型号与计算能力，并在 GPU 上执行一次矩阵乘法。
+第一项冒烟测试检查源码挂载、NVCC、PyTorch/CUDA/cuDNN 版本、GPU 型号与计算能力。模型冒烟脚本分别运行关闭/启用超网络的正式 batch 16 BF16 编译前后向，并强制检查峰值保留显存不超过 14.5 GiB。
 
 ### 维护命令
 

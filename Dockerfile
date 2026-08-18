@@ -34,4 +34,8 @@ RUN apt-get update \
 
 WORKDIR /workspace
 
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --editable ".[dev]"
+
 CMD ["/bin/bash"]

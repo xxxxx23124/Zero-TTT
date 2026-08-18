@@ -1,0 +1,92 @@
+schema_version = 1
+run_name = "test"
+seed = 7
+
+[game]
+board_size = 19
+komi_half_points = 15
+max_moves = 12
+history_length = 8
+
+[model]
+input_planes = 25
+global_features = 5
+d_model = 64
+n_heads = 4
+n_layers = 2
+d_ff = 128
+activation_checkpoint = false
+checkpoint_every = 2
+
+[model.rope]
+base = 100.0
+scale = 1.0
+rotary_dim = 16
+centered = true
+learnable = false
+
+[model.hypernet]
+enabled = false
+num_layers = 1
+rank = 4
+hidden_dim = 16
+context_gradient_scale = 0.1
+lr_multiplier = 0.1
+grad_clip = 0.1
+freeze_steps = 2
+ramp_steps = 4
+
+[training]
+batch_size = 2
+accumulation_steps = 2
+learning_rate = 0.001
+beta1 = 0.9
+beta2 = 0.95
+eps = 1e-8
+weight_decay = 0.01
+warmup_steps = 2
+gradient_clip = 1.0
+policy_loss_weight = 1.0
+value_loss_weight = 1.0
+ownership_loss_weight = 0.15
+score_loss_weight = 0.05
+ema_half_life_samples = 32
+ema_update_interval = 1
+publish_interval = 2
+checkpoint_keep = 2
+
+[search]
+num_threads = 2
+max_batch_size = 2
+batch_delay_ms = 1.0
+inference_cache_size = 128
+c_puct = 1.5
+fpu_reduction = 0.2
+virtual_loss = 1
+dirichlet_weight = 0.25
+dirichlet_total_concentration = 10.83
+budget_1 = 1
+budget_2 = 2
+budget_3 = 3
+budget_4 = 4
+entropy_threshold = 0.35
+gap_threshold_1 = 0.30
+gap_threshold_2 = 0.20
+gap_threshold_3 = 0.10
+temperature_moves = 2
+
+[replay]
+capacity_positions = 50
+database_name = "replay.sqlite3"
+decoded_cache_games = 4
+
+[selfplay]
+games_per_cycle = 2
+minimum_replay_positions = 2
+train_samples_per_new_position = 1.0
+
+[runtime]
+run_dir = "runs/test"
+device = "cpu"
+compile_model = false
+compile_mode = "default"

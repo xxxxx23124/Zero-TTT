@@ -222,3 +222,6 @@ __marimo__/
 *.out
 *.gz
 *.toc
+
+# Zero-TTT runtime state
+/runs/
