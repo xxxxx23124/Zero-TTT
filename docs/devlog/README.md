@@ -16,6 +16,7 @@ YYYY-MM-DD-short-topic.md
 
 | 日期 | 主题 | 结果摘要 | 相关决策 |
 | --- | --- | --- | --- |
+| 2026-08-18 | [Transformer 显存冒烟测试](2026-08-18-transformer-memory-smoke.md) | 324.75M 参数结构近似模型在 batch 16 下峰值保留显存 6.34 GiB | D-020 至 D-023 |
 
 ## 日志模板
 
