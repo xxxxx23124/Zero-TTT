@@ -36,6 +36,6 @@ WORKDIR /workspace
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --editable ".[dev]"
+RUN python -m pip install --break-system-packages --editable ".[dev]"
 
 CMD ["/bin/bash"]

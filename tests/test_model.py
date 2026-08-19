@@ -10,6 +10,7 @@ from zero_ttt.game.features import encode_position
 from zero_ttt.game.rules import BOARD_AREA, PASS_ACTION
 from zero_ttt.game.state import GameState
 from zero_ttt.model.rope import AxialRoPE2D
+from zero_ttt.model.depth_mixing import SparseDepthWeightedAverage
 from zero_ttt.model.transformer import PolicyValueTransformer
 from zero_ttt.training.losses import TrainingTargets, compute_losses
 
@@ -46,6 +47,8 @@ def test_model_outputs_and_illegal_mask() -> None:
     assert output.value.shape == (2, 1)
     assert output.ownership.shape == (2, 361)
     assert output.score_margin.shape == (2, 1)
+    assert output.hyper_a_saturation.ndim == 0
+    assert output.hyper_b_saturation.ndim == 0
     assert torch.isneginf(output.policy_logits[:, 0]).all()
     assert torch.isfinite(output.policy_logits[:, PASS_ACTION]).all()
 
@@ -114,17 +117,43 @@ def test_checkpoint_and_compile_match_eager_outputs_and_gradients() -> None:
     assert torch.allclose(expected, actual, atol=1e-6, rtol=1e-5)
 
 
-def test_hypernet_starts_as_exact_zero_residual_and_receives_gradient() -> None:
+def test_shared_hypernet_and_dwa_start_as_exact_baseline_and_receive_gradient() -> None:
     config = load_config("configs/test.toml")
-    hyper = replace(config.model.hypernet, enabled=True)
-    model = PolicyValueTransformer(replace(config.model, hypernet=hyper)).train()
+    baseline_config = replace(
+        config.model,
+        hypernet=replace(config.model.hypernet, enabled=False),
+        depth_mixing=replace(config.model.depth_mixing, enabled=False),
+    )
+    baseline = PolicyValueTransformer(baseline_config).train()
+    model = PolicyValueTransformer(config.model).train()
+    model.load_state_dict(baseline.state_dict(), strict=False)
     board, global_features, legal = tensors_for_empty(batch=1)
-    model.set_hypernet_scale(0.0)
-    without_branch = model(board, global_features, legal).value.detach()
-    model.set_hypernet_scale(1.0)
-    with_branch = model(board, global_features, legal).value
-    assert torch.equal(without_branch, with_branch.detach())
-    with_branch.sum().backward()
-    b_head = next(block.hypernet.b_head for block in model.blocks if block.hypernet is not None)
-    assert b_head.weight.grad is not None
-    assert torch.isfinite(b_head.weight.grad).all()
+    expected = baseline(board, global_features, legal)
+    actual = model(board, global_features, legal)
+    assert torch.equal(expected.policy_logits, actual.policy_logits)
+    assert torch.equal(expected.value, actual.value)
+    assert model.hypernet is not None
+    assert sum(block.use_hypernet for block in model.blocks) == config.model.hypernet.num_layers
+    assert [index for index, block in enumerate(model.blocks) if block.use_hypernet] == [1]
+    assert actual.hyper_dynamic_rms.item() == 0.0
+    (actual.policy_logits.sum() + actual.ownership.sum()).backward()
+    assert model.hypernet.b_head.weight.grad is not None
+    assert torch.isfinite(model.hypernet.b_head.weight.grad).all()
+    assert model.hypernet.b_head.weight.grad.norm() > 0
+
+
+def test_sparse_depth_weighted_average_sources_and_identity() -> None:
+    config = load_config("configs/test.toml")
+    depth_config = replace(config.model.depth_mixing, dilation=4, period=4)
+    mixing = SparseDepthWeightedAverage(8, depth_config)
+    assert mixing.source_depths == {4: (0, 4), 8: (0, 4, 8)}
+    states = {
+        0: torch.full((1, 2, 3), 1.0),
+        4: torch.full((1, 2, 3), 4.0, requires_grad=True),
+        8: torch.full((1, 2, 3), 8.0, requires_grad=True),
+    }
+    output = mixing(8, states, states[8])
+    assert torch.equal(output, states[8])
+    output.sum().backward()
+    assert mixing.weights["8"].grad is not None
+    assert torch.count_nonzero(mixing.weights["8"].grad) == 3

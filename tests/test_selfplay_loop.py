@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import numpy as np
+import torch
 
 from zero_ttt.config import load_config
 from zero_ttt.game.rules import ACTION_SIZE
@@ -53,8 +54,19 @@ def test_tiny_closed_loop_and_resume(tmp_path) -> None:
         assert result.new_positions == 2
         assert result.optimizer_steps == 1
         assert result.final_optimizer_step == 1
-        assert (config.run_dir / "published" / "current.pt").exists()
+        assert loop.batch_backend.model_version == 1
+        assert loop.trainer.state.last_published_step == 1
+        publication_path = config.run_dir / "published" / "current.pt"
+        assert publication_path.exists()
+        publication = torch.load(publication_path, map_location="cpu", weights_only=False)
+        backend_state = loop.batch_backend.model.state_dict()
+        for name, published_value in publication["slow_state"].items():
+            assert torch.equal(
+                backend_state[name].detach().cpu(),
+                published_value.to(dtype=backend_state[name].dtype),
+            )
         assert (config.run_dir / config.replay.database_name).exists()
     with CoreLoop(config) as restored:
         assert restored.trainer.state.optimizer_step == 1
+        assert restored.batch_backend.model_version == 1
         assert restored.replay.position_count == 2

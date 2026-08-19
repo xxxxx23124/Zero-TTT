@@ -1,4 +1,4 @@
-"""Per-position full low-rank hypernetwork branch."""
+"""Shared per-position low-rank hypernetwork branch."""
 
 from __future__ import annotations
 
@@ -16,13 +16,14 @@ def scale_gradient(tensor: torch.Tensor, scale: float) -> torch.Tensor:
     return detached + scale * (tensor - detached)
 
 
-class DynamicLowRank(nn.Module):
+class SharedDynamicLowRank(nn.Module):
     def __init__(
         self,
         d_model: int,
         d_ff: int,
         rank: int,
         hidden_dim: int,
+        n_layers: int,
         context_gradient_scale: float,
     ) -> None:
         super().__init__()
@@ -31,21 +32,35 @@ class DynamicLowRank(nn.Module):
         self.rank = rank
         self.context_gradient_scale = context_gradient_scale
         self.context_norm = StableRMSNorm(d_model)
-        self.hidden = nn.Linear(d_model, hidden_dim)
+        self.context_projection = nn.Linear(d_model, hidden_dim)
+        self.layer_embedding = nn.Embedding(n_layers, hidden_dim)
         self.a_head = nn.Linear(hidden_dim, d_model * rank)
         self.b_head = nn.Linear(hidden_dim, rank * d_ff)
         nn.init.zeros_(self.b_head.weight)
         nn.init.zeros_(self.b_head.bias)
 
-    def forward(self, hidden: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
-        """Return a dynamic residual for board tokens only."""
+    def forward(
+        self,
+        hidden: torch.Tensor,
+        context: torch.Tensor,
+        layer_selector: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return a dynamic residual and raw A/B saturation fractions."""
 
         batch = hidden.shape[0]
         context = scale_gradient(context, self.context_gradient_scale)
-        encoded = F.silu(self.hidden(self.context_norm(context)))
-        a = torch.tanh(self.a_head(encoded)).view(batch, self.d_model, self.rank)
-        b = torch.tanh(self.b_head(encoded)).view(batch, self.rank, self.d_ff)
-        a = a / math.sqrt(self.rank)
-        b = b / math.sqrt(self.d_ff)
+        encoded = self.context_projection(self.context_norm(context))
+        layer = torch.matmul(layer_selector, self.layer_embedding.weight).to(
+            dtype=encoded.dtype
+        )
+        encoded = F.silu(encoded + layer)
+        raw_a = torch.tanh(self.a_head(encoded))
+        raw_b = torch.tanh(self.b_head(encoded))
+        a = raw_a.view(batch, self.d_model, self.rank)
+        b = raw_b.view(batch, self.rank, self.d_ff)
         low_rank = torch.einsum("bnf,brf->bnr", hidden, b)
-        return torch.einsum("bnr,bdr->bnd", low_rank, a)
+        dynamic = torch.einsum("bnr,bdr->bnd", low_rank, a) / math.sqrt(self.rank)
+        with torch.no_grad():
+            a_saturation = (raw_a.abs() >= 0.95).float().mean()
+            b_saturation = (raw_b.abs() >= 0.95).float().mean()
+        return dynamic, a_saturation, b_saturation

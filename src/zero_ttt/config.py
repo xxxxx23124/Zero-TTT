@@ -39,8 +39,13 @@ class HypernetConfig:
     context_gradient_scale: float
     lr_multiplier: float
     grad_clip: float
-    freeze_steps: int
-    ramp_steps: int
+
+
+@dataclass(frozen=True, slots=True)
+class DepthMixingConfig:
+    enabled: bool
+    dilation: int
+    period: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +60,7 @@ class ModelConfig:
     checkpoint_every: int
     rope: RoPEConfig
     hypernet: HypernetConfig
+    depth_mixing: DepthMixingConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +128,7 @@ class SelfPlayConfig:
 class RuntimeConfig:
     run_dir: str
     device: str
+    ema_device: str
     compile_model: bool
     compile_mode: str
 
@@ -211,7 +218,7 @@ def _construct_dataclass(cls: type[T], data: dict[str, Any], path: str) -> T:
 
 
 def validate_config(config: ExperimentConfig) -> None:
-    if config.schema_version != 1:
+    if config.schema_version != 2:
         raise ValueError(f"unsupported schema_version={config.schema_version}")
     if config.game.board_size != 19:
         raise ValueError("only 19x19 is supported")
@@ -246,6 +253,11 @@ def validate_config(config: ExperimentConfig) -> None:
     ):
         if value < 0:
             raise ValueError(f"hypernet.{name} must be non-negative")
+    depth_mixing = model.depth_mixing
+    if depth_mixing.dilation <= 0 or depth_mixing.period <= 0:
+        raise ValueError("depth_mixing dilation and period must be positive")
+    if depth_mixing.dilation > model.n_layers or depth_mixing.period > model.n_layers:
+        raise ValueError("depth_mixing dilation and period cannot exceed model depth")
     train = config.training
     positive_train = (
         train.batch_size,
@@ -275,6 +287,8 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("selfplay.games_per_cycle must be positive")
     if config.runtime.device not in {"cpu", "cuda"}:
         raise ValueError("runtime.device must be 'cpu' or 'cuda'")
+    if config.runtime.ema_device not in {"cpu", "cuda"}:
+        raise ValueError("runtime.ema_device must be 'cpu' or 'cuda'")
 
 
 def load_config(path: str | Path) -> ExperimentConfig:

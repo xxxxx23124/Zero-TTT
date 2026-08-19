@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import numpy as np
 import torch
 from torch import nn
@@ -12,7 +10,7 @@ from zero_ttt.replay.sampler import ReplaySampler
 from zero_ttt.replay.sqlite_store import ReplayStore
 from zero_ttt.training.checkpoint import CheckpointManager
 from zero_ttt.training.ema import ema_decay, update_slow_weights
-from zero_ttt.training.trainer import Trainer
+from zero_ttt.training.trainer import Trainer, parameters_are_finite
 from test_replay import make_record
 
 
@@ -27,20 +25,45 @@ def test_sample_based_ema_uses_equivalent_batched_decay() -> None:
     assert torch.allclose(slow.weight, torch.full_like(slow.weight, 0.5))
 
 
-def test_hypernetwork_freeze_and_device_scalar_ramp(tmp_path) -> None:
+def test_parameter_finiteness_check_detects_nan_and_infinity() -> None:
+    parameter = nn.Parameter(torch.tensor([1.0, -2.0]))
+    assert parameters_are_finite((parameter,))
+    with torch.no_grad():
+        parameter[0] = torch.nan
+    assert not parameters_are_finite((parameter,))
+    with torch.no_grad():
+        parameter[0] = torch.inf
+    assert not parameters_are_finite((parameter,))
+
+
+def test_ema_synchronizes_named_buffers() -> None:
+    fast = nn.BatchNorm1d(2)
+    slow = nn.BatchNorm1d(2)
+    with torch.no_grad():
+        fast.running_mean.copy_(torch.tensor([2.0, 3.0]))
+        fast.running_var.copy_(torch.tensor([4.0, 5.0]))
+        fast.num_batches_tracked.fill_(7)
+        slow.running_mean.zero_()
+        slow.running_var.fill_(1.0)
+        slow.num_batches_tracked.zero_()
+    update_slow_weights(slow, fast, samples=1, half_life_samples=1)
+    assert torch.equal(slow.running_mean, fast.running_mean)
+    assert torch.equal(slow.running_var, fast.running_var)
+    assert torch.equal(slow.num_batches_tracked, fast.num_batches_tracked)
+
+
+def test_hypernetwork_trains_from_first_step_at_reduced_learning_rate(tmp_path) -> None:
     config = load_config("configs/test.toml")
-    hyper = replace(config.model.hypernet, enabled=True)
-    config = replace(config, model=replace(config.model, hypernet=hyper))
     trainer = Trainer(config, CheckpointManager(tmp_path, keep=2))
-    _, frozen = trainer._set_schedule(hyper.freeze_steps)
+    learning_rate = trainer._set_schedule(1)
     hyper_lrs = [
         group["lr"] for group in trainer.optimizer.param_groups if group["group_name"] == "hypernet"
     ]
-    assert frozen == 0.0
-    assert hyper_lrs and set(hyper_lrs) == {0.0}
-    _, ramped = trainer._set_schedule(hyper.freeze_steps + 1)
-    assert ramped == 1.0 / hyper.ramp_steps
-    assert trainer.fast.hypernet_scale.item() == ramped
+    assert hyper_lrs and set(hyper_lrs) == {
+        learning_rate * config.model.hypernet.lr_multiplier
+    }
+    assert trainer.slow.cls_token.device.type == "cpu"
+    assert trainer.slow.cls_token.dtype == torch.float32
 
 
 def test_one_optimizer_step_ema_publish_and_restore(tmp_path) -> None:
@@ -60,11 +83,14 @@ def test_one_optimizer_step_ema_publish_and_restore(tmp_path) -> None:
         metrics = trainer.train_optimizer_step(sampler, rng)
         assert metrics.step == 1
         assert np.isfinite(metrics.total_loss)
+        assert metrics.hyper_gradient_norm is not None
+        assert metrics.ema_update_seconds is not None
         assert trainer.state.samples_seen == (
             config.training.batch_size * config.training.accumulation_steps
         )
         checkpoint = trainer.save_checkpoint(rng)
         publication = trainer.publish()
+        assert trainer.slow.cls_token.device.type == "cpu"
         saved_parameter = next(trainer.fast.parameters()).detach().clone()
         with torch.no_grad():
             next(trainer.fast.parameters()).add_(2.0)

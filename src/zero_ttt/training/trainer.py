@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import copy
 import math
+import time
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 import torch
@@ -31,13 +31,30 @@ class TrainerState:
 class StepMetrics:
     step: int
     learning_rate: float
-    hypernet_scale: float
     total_loss: float
     policy_loss: float
     value_loss: float
     ownership_loss: float
     score_loss: float
     gradient_norm: float
+    hyper_gradient_norm: float | None
+    hyper_a_saturation: float
+    hyper_b_saturation: float
+    hyper_dynamic_rms: float
+    hyper_static_rms: float
+    ema_update_seconds: float | None
+
+
+def parameters_are_finite(parameters: Iterable[torch.Tensor]) -> bool:
+    """Check parameters without allocating full-size boolean temporaries."""
+
+    infinity_norms = [
+        torch.linalg.vector_norm(parameter.detach(), ord=math.inf)
+        for parameter in parameters
+    ]
+    if not infinity_norms:
+        return True
+    return bool(torch.isfinite(torch.stack(infinity_norms)).all())
 
 
 class Trainer:
@@ -50,15 +67,23 @@ class Trainer:
     ) -> None:
         self.config = config
         self.device = torch.device(config.runtime.device)
+        self.ema_device = torch.device(config.runtime.ema_device)
         self.fast = (fast_model or PolicyValueTransformer(config.model)).to(self.device)
-        self.slow = (slow_model or copy.deepcopy(self.fast)).to(self.device, dtype=torch.float32)
+        self.slow = (slow_model or PolicyValueTransformer(config.model)).to(
+            self.ema_device,
+            dtype=torch.float32,
+        )
+        self.slow.load_state_dict(self.fast.state_dict())
         self.slow.eval().requires_grad_(False)
         self.state = TrainerState()
         self.checkpoints = checkpoint_manager
         self._hyper_ids = {id(parameter) for parameter in self.fast.hypernet_parameters()}
         self.optimizer = self._build_optimizer()
         if config.runtime.compile_model:
-            self.fast.compile(dynamic=False, mode=config.runtime.compile_mode)
+            self.fast.compile_training_blocks(
+                dynamic=False,
+                mode=config.runtime.compile_mode,
+            )
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
         groups: dict[tuple[bool, bool], list[nn.Parameter]] = {}
@@ -90,24 +115,15 @@ class Trainer:
             return self.config.training.learning_rate * step / warmup
         return self.config.training.learning_rate * math.sqrt(warmup / step)
 
-    def _set_schedule(self, step: int) -> tuple[float, float]:
+    def _set_schedule(self, step: int) -> float:
         learning_rate = self._base_lr(step)
         hyper = self.config.model.hypernet
-        if not hyper.enabled or step <= hyper.freeze_steps:
-            scale = 0.0
-        else:
-            scale = min(1.0, (step - hyper.freeze_steps) / hyper.ramp_steps)
-        self.fast.set_hypernet_scale(scale)
         for group in self.optimizer.param_groups:
             if group["group_name"] == "hypernet":
-                group["lr"] = (
-                    0.0
-                    if step <= hyper.freeze_steps
-                    else learning_rate * hyper.lr_multiplier
-                )
+                group["lr"] = learning_rate * hyper.lr_multiplier
             else:
                 group["lr"] = learning_rate
-        return learning_rate, scale
+        return learning_rate
 
     def _tensor_batch(self, batch: SampledBatch) -> tuple[torch.Tensor, ...]:
         arrays = (
@@ -141,9 +157,9 @@ class Trainer:
     ) -> StepMetrics:
         self.fast.train()
         next_step = self.state.optimizer_step + 1
-        learning_rate, hyper_scale = self._set_schedule(next_step)
-        self.optimizer.zero_grad(set_to_none=True)
-        totals = np.zeros(5, dtype=np.float64)
+        learning_rate = self._set_schedule(next_step)
+        self.optimizer.zero_grad(set_to_none=False)
+        totals = np.zeros(9, dtype=np.float64)
         accumulation = self.config.training.accumulation_steps
         autocast = (
             torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -185,6 +201,10 @@ class Trainer:
                         losses.value.item(),
                         losses.ownership.item(),
                         losses.score.item(),
+                        output.hyper_a_saturation.item(),
+                        output.hyper_b_saturation.item(),
+                        output.hyper_dynamic_rms.item(),
+                        output.hyper_static_rms.item(),
                     ]
                 )
         except BaseException:
@@ -196,6 +216,7 @@ class Trainer:
             for parameter in self.fast.parameters()
             if id(parameter) in self._hyper_ids and parameter.grad is not None
         ]
+        hyper_norm_value: float | None = None
         if hyper_parameters:
             hyper_norm = torch.nn.utils.clip_grad_norm_(
                 hyper_parameters,
@@ -203,6 +224,7 @@ class Trainer:
             )
             if not torch.isfinite(hyper_norm):
                 self._fault("non-finite hypernetwork gradient")
+            hyper_norm_value = float(hyper_norm)
         gradient_norm = torch.nn.utils.clip_grad_norm_(
             self.fast.parameters(),
             self.config.training.gradient_clip,
@@ -210,32 +232,40 @@ class Trainer:
         if not torch.isfinite(gradient_norm):
             self._fault("non-finite model gradient")
         self.optimizer.step()
-        if any(not torch.isfinite(parameter).all() for parameter in self.fast.parameters()):
+        if not parameters_are_finite(self.fast.parameters()):
             self._fault("non-finite model parameter after optimizer step")
 
         effective_batch = self.config.training.batch_size * accumulation
         self.state.optimizer_step = next_step
         self.state.samples_seen += effective_batch
         self.state.ema_pending_samples += effective_batch
+        ema_update_seconds: float | None = None
         if next_step % self.config.training.ema_update_interval == 0:
+            ema_started = time.perf_counter()
             update_slow_weights(
                 self.slow,
                 self.fast,
                 self.state.ema_pending_samples,
                 self.config.training.ema_half_life_samples,
             )
+            ema_update_seconds = time.perf_counter() - ema_started
             self.state.ema_pending_samples = 0
         totals /= accumulation
         return StepMetrics(
             step=next_step,
             learning_rate=learning_rate,
-            hypernet_scale=hyper_scale,
             total_loss=float(totals[0]),
             policy_loss=float(totals[1]),
             value_loss=float(totals[2]),
             ownership_loss=float(totals[3]),
             score_loss=float(totals[4]),
             gradient_norm=float(gradient_norm),
+            hyper_gradient_norm=hyper_norm_value,
+            hyper_a_saturation=float(totals[5]),
+            hyper_b_saturation=float(totals[6]),
+            hyper_dynamic_rms=float(totals[7]),
+            hyper_static_rms=float(totals[8]),
+            ema_update_seconds=ema_update_seconds,
         )
 
     def train_steps(
@@ -281,7 +311,7 @@ class Trainer:
         )
 
     def restore(self, path, rng: np.random.Generator | None = None) -> None:
-        payload = self.checkpoints.load(path, map_location=self.device)
+        payload = self.checkpoints.load(path, map_location="cpu")
         if payload["config_sha256"] != self.config.sha256:
             raise ValueError("checkpoint configuration does not match this run")
         self.fast.load_state_dict(payload["fast_state"])

@@ -1,19 +1,20 @@
 # Zero-TTT 模型、训练与搜索设计
 
-> 状态：核心参考实现已落地，生产 GPU 验收待完成
+> 状态：共享超网络、稀疏 DWA、CPU EMA 与发布生命周期已落地，生产 GPU 验收通过
 >
-> 最近更新：2026-08-18
+> 最近更新：2026-08-19
 
 本文集中规定当前主线的模型结构、训练权重生命周期、MCTS 调度和性能边界。围棋规则、数据许可和总体里程碑仍分别由[实施计划](implementation_plan.md)与[设计决策](design_decisions.md)管理。
 
 ## 1. 设计边界
 
-当前闭环不再运行候选模型与冠军模型之间的独立竞技评估，也不存在晋升门槛或自动回退。训练只维护两种生命周期的同构权重：
+当前闭环不再运行候选模型与冠军模型之间的独立竞技评估，也不存在晋升门槛或自动回退。训练维护三份同构但职责、精度和驻留位置不同的权重：
 
 | 名称 | 职责 | 更新方式 |
 | --- | --- | --- |
 | `fast` | 接收训练梯度，快速吸收新数据 | 每个优化器步骤更新 |
-| `slow` | 为自博弈、GTP 和发布提供平滑模型 | 从 `fast` 做稀疏等效 EMA |
+| `slow` | 为发布提供平滑源模型 | CPU FP32，从 `fast` 做稀疏等效 EMA |
+| `publication` | 为自博弈和未来 GTP 提供冻结推理权重 | 从 `slow` 发布，GPU BF16，只在阶段边界替换 |
 
 验证损失、固定局面回归、非有限值检查和梯度健康检查继续保留，但只负责暴露问题，不参与模型晋升、拒绝或回退。非有限值属于运行错误：训练立即停止并保存故障 checkpoint，不自动加载旧权重继续训练。
 
@@ -30,7 +31,7 @@
 
 配置加载遵守以下规则：
 
-- TOML 顶层包含 `schema_version`，未知字段、缺失必填字段、错误类型和越界值都直接报错。
+- TOML 顶层包含 `schema_version=2`，未知字段、缺失必填字段、错误类型和越界值都直接报错；旧结构 checkpoint 不迁移。
 - 加载后转换为不可变的类型化配置对象；业务代码不得读取散落的环境变量或自行补默认值。
 - 规范化后的完整配置计算 SHA-256，并与原始 TOML、schema 版本一起写入 checkpoint。
 - 恢复训练时，结构相关字段必须与 checkpoint 完全一致；允许变化的运行字段必须列入显式白名单并记录差异。
@@ -45,23 +46,43 @@
 
 | 参数 | 默认值 |
 | --- | ---: |
-| Transformer 层数 | 24 |
-| 隐藏宽度 `d_model` | 1024 |
-| 注意力头数 | 16 |
+| Transformer 层数 | 32 |
+| 隐藏宽度 `d_model` | 1280 |
+| 注意力头数 | 20 |
 | 每头宽度 | 64 |
-| SwiGLU 中间宽度 `d_ff` | 2816 |
+| SwiGLU 中间宽度 `d_ff` | 3328 |
 | 主体 dropout | 0 |
-| 基础参数量 | 约 3.09 亿 |
+| 关闭实验的基础参数量 | 620,432,901 |
+| 默认总参数量 | 625,357,745 |
 
 每个交叉点对应一个 token，另加一个全局 token，总序列长度为 362。全局 token 严格初始化为 `learned_cls + global_projection(global_features)`：只叠加贴目、手数、连续 pass 和当前方等不能从当前棋盘唯一恢复的全局特征，不加入棋盘均值、额外池化或绝对位置向量。输入和值目标始终采用当前行棋方视角。
 
-每层使用 Pre-RMSNorm、QK-Norm、无 bias 的主体线性投影和 SwiGLU。注意力与 FFN 的残差输出投影按 `1 / sqrt(2L)` 做深度缩放初始化，其中 `L=24`。网络内部不使用 dropout，也不在 checkpoint 区域内放置其他随机操作。
+每层使用 Pre-RMSNorm、QK-Norm、无 bias 的主体线性投影和 SwiGLU。注意力与 FFN 的残差输出投影按 `1 / sqrt(2L)` 做深度缩放初始化，其中 `L=32`。网络内部不使用 dropout，也不在 checkpoint 区域内放置其他随机操作。
 
-### 3.2 二维旋转位置编码
+### 3.2 共享局面条件低秩分支
+
+正式配置从第一步起默认启用一个跨层共享生成器，作用于最后 16 层 FFN down-projection。每层仍以该层自己的全局 token `c` 为上下文，并加入层嵌入：
+
+```text
+z = SiLU(proj(RMSNorm(c)) + embedding(layer))
+y_board = W_down(h_board) + A(z) B(z) h_board / sqrt(rank)
+```
+
+默认 `rank=8`、生成器隐藏宽度 `128`。动态项只作用于 361 个棋盘 token，不修改注意力投影和全局 token。所有层共享 `RMSNorm`、上下文投影、层嵌入和 A/B 输出头，不为每层复制一套生成器。
+
+A/B 原始输出经 `tanh` 有界化，B 头权重和 bias 为零初始化，因此初始前向严格等于关闭分支的基线，同时第一步 B 头即可取得梯度。分支 scale 恒为 1，不冻结也不 ramp。上下文梯度、学习率倍率和独立梯度裁剪上限均为 `0.1`。训练记录 A/B 饱和率、动态/静态分支 RMS 和超网络梯度范数。
+
+### 3.3 稀疏 DenseFormer DWA
+
+正式配置默认在第 4、8、12、16、20、24、28、32 层后执行 depth-weighted averaging，`dilation=4`、`period=4`。每个混合点只组合与当前深度同余的原始 block 输出（含 depth 0 输入）；当前层系数初始化为 1，其余为 0，所以初始前向严格等于未启用 DWA 的主干。
+
+实现只保留未来混合点实际会引用的深度状态，避免无条件保存全部层输出而抵消 activation checkpoint 的显存收益。`configs/rtx4090l_baseline.toml` 同时关闭 DWA 和共享超网络，作为正式结构基线。
+
+### 3.4 二维旋转位置编码
 
 Q、K 的 64 个每头通道平均分给行、列两个旋转子空间：前 32 维编码行坐标，后 32 维编码列坐标。361 个棋盘 token 使用以天元为原点的 `-9..9` 行列坐标；全局 token 使用零坐标，因此旋转恒等。默认 `rope_base=100`、`rope_scale=1`，固定 FP32 频率按 `100^(-i/16)` 生成后再转换到计算 dtype。二维 RoPE 只作用于 Q、K，不改变 V，也不额外加入学习式绝对位置向量。
 
-### 3.3 输出接口与损失
+### 3.5 输出接口与损失
 
 模型输出统一为：
 
@@ -77,10 +98,11 @@ Q、K 的 64 个每头通道平均分给行、列两个旋转子空间：前 32 
 - 参数和优化器状态保持稳定训练所需的精度，矩阵计算使用 BF16 autocast；首版优化器为 fused AdamW。
 - 物理训练 batch 固定为 16，默认累积 16 个 micro-batch 后更新一次，因此有效 batch 为 256。
 - 只在完整累积周期结束时执行梯度裁剪、优化器步骤、学习率调度和 `fast` 训练步计数；全局梯度范数上限为 `1.0`。
-- 默认隔一层执行一次 `torch.utils.checkpoint.checkpoint`，显式设置 `use_reentrant=False` 和 `preserve_rng_state=False`。由于模型内部没有 dropout 或随机分支，重计算不依赖随机数恢复。
-- 训练和推理分别建立静态形状的 `torch.compile` 图；推理为 batch `1/2/4/8/16` 建立有限桶，避免任意动态形状反复编译。
+- 默认每层执行 `torch.utils.checkpoint.checkpoint`，显式设置 `use_reentrant=False` 和 `preserve_rng_state=False`。由于模型内部没有 dropout 或随机分支，重计算不依赖随机数恢复；以额外计算换取约 6.25 亿参数的单卡容量。
+- 训练按 Transformer block 建立静态形状的 `torch.compile` 图，以限制 AOTAutograd 跨层缓冲生命周期；推理编译完整模型，并为 batch `1/2/4/8/16` 建立有限桶，避免任意动态形状反复编译。
 - 注意力只通过 `torch.nn.functional.scaled_dot_product_attention` 实现，让 PyTorch 按设备和数据类型选择可用的 FlashAttention 或其他加速内核。
-- 数据加载使用 pinned memory 和异步 H2D；清梯度使用 `set_to_none=True`。是否编译优化器必须以实际基准结果决定，不作为模型正确性的依赖。
+- 数据加载使用 pinned memory 和异步 H2D；训练清梯度复用既有 FP32 梯度缓冲，避免 625M 模型跨步反复释放和切分约 2.33 GiB 梯度造成 reserved 碎片。是否编译优化器必须以实际基准结果决定，不作为模型正确性的依赖。
+- `slow` EMA 固定为 CPU FP32；训练 GPU 同时保留 `fast` 和一份独立的 BF16 publication 推理模型，不在 GPU 保存 FP32 EMA。
 
 ## 5. `fast` 与 `slow`
 
@@ -91,9 +113,9 @@ beta = 2 ** (-delta_samples / 1_048_576)
 slow = beta * slow + (1 - beta) * fast
 ```
 
-第一次创建 `slow` 时完整复制 `fast`。EMA 更新只发生在成功完成的优化器步骤之后；中断的梯度累积周期不增加样本计数。每 256 个优化器步骤从 `slow` 发布一个不可变模型快照，并分配单调递增的 `model_version`。
+第一次创建 `slow` 时按名称完整复制 `fast` 到 CPU FP32。EMA 更新只发生在成功完成的优化器步骤之后；中断的梯度累积周期不增加样本计数。更新同步执行并校验全部 parameter/buffer 名称，buffer 直接同步；每次更新耗时写入 `ema_update_seconds`。首版不采用异步 D2H 双缓冲。每 256 个优化器步骤从 `slow` 发布一个不可变 BF16 模型快照，并分配单调递增的 `model_version`。
 
-自博弈和 GTP 只加载已发布的 `slow`。新版本只在一盘棋或一个明确的搜索任务边界替换；一次 MCTS 的所有叶节点必须使用同一 `model_version`。`fast` 不直接生成自博弈数据，也不存在 `anchor`、`candidate` 或 `champion`。
+自博弈和 GTP 只加载独立的 GPU BF16 publication 副本。新版本只在完整自博弈阶段或一个明确的搜索任务边界替换；加载权重和更新 `model_version` 是同一个生命周期操作，推理请求还必须校验所请求版本。一次 MCTS 和一盘棋的所有叶节点使用同一版本。`fast` 不直接生成自博弈数据，也不存在 `anchor`、`candidate` 或 `champion`。
 
 完整训练 checkpoint 至少保存：`fast`、FP32 `slow`、优化器、学习率调度、优化器步数、已处理样本数、EMA 上次更新时间、配置与哈希、数据游标、回放元数据和全部随机数状态。发布快照是由 `slow` 派生的 BF16 推理产物，不替代完整 checkpoint。
 
@@ -169,30 +191,22 @@ D4 的八种旋转/镜像在样本被抽取后在线随机应用。棋盘特征�
 - 2D RoPE 行列映射、全局 token、D4 策略/所有权变换及 pass 不变性通过单元测试。
 - 缓存不会跨规则、超级劫历史或模型版本污染；虚拟损失在成功、取消和异常路径都归零。
 - 动态预算的四个边界、FPU 初值和根噪声启用范围具有确定性测试。
-- checkpoint 恢复后，`fast`、`slow`、EMA 样本计数、数据游标和随机状态均连续。
+- checkpoint 恢复后，GPU `fast`、CPU FP32 `slow`、EMA 样本计数、BF16 publication 版本、数据游标和随机状态均连续。
+- publication 后实际推理权重与 `model_version` 同时更新；整盘棋中不得换模型。
 - 最终真实模型在训练图完成编译后，batch 16 的峰值保留显存不得超过 14.5 GiB。若超限，只增加 activation checkpoint 覆盖率，不缩小既定模型。
 
-2026-08-18 的结构近似冒烟测试在当前 GPU 上验证了规模可行性：324.75M 参数、batch 16、FP32 `slow` 副本、fused AdamW、BF16 激活和后四层完整动态低秩分支的峰值保留显存为 6.34 GiB。该结果尚未包含最终输入、全部输出头和 `torch.compile`，因此只作为起始证据；详见[开发日志](devlog/2026-08-18-transformer-memory-smoke.md)。
+baseline 为 620,432,901 参数，默认共享超网络与 DWA 配置为 625,357,745 参数。RTX 4090 Laptop 三副本正式冒烟中，默认配置在 batch 16、累积 16、连续 16 个优化器步下峰值 allocated/reserved 为 13.062/14.246 GiB；候选扫描与完整结果见 [625M 扩容日志](devlog/2026-08-19-625m-model-scale-up.md)。
 
-## 11. 实验性完整低秩超网络
+## 11. 论文取舍
 
-低秩超网络默认关闭，不属于基线验收依赖。启用时只接入最后 4 个 Transformer 层的 FFN 下投影。设 SwiGLU 输出为 `h`，基础下投影为 `W_d`，则：
+- **CaiT：** class-attention 的目标是把 patch 表征集中到 class token；当前围棋模型需要全局特征在所有 block 内持续广播，不改用独立 class-attention 阶段。LayerScale 与现有 `1/sqrt(2L)` 深度缩放残差初始化作用重叠，本轮不叠加。
+- **DeepNet / DeepNorm：** DeepNorm 依赖 Post-Norm 结构与配套参数初始化，不直接移植到当前 32 层 Pre-RMSNorm 主干。
+- **ReZero：** 原版会移除归一化并用可学习零门控启动；本项目保留 RMSNorm，只吸收“新增残差从零开始”的思想，用 B 头零初始化实现。
+- **DenseFormer：** 稀疏 DWA 进入默认实验配方，以恒等初始化维持起点等价，并保留完全关闭的基线。
+- **HyperNetworks / HyperFormer / Hyperfan：** 采用跨层共享的条件生成器，避免 16 套独立头；Hyperfan 作为生成权重初始化风险依据，但零动态残差已经提供严格基线起点，因此不额外实现完整 Hyperfan 初始化。
+- **SoViT：** 吸收联合扩大 width、depth 和 MLP dimension 的 shape-scaling 思路；最终 32×1280×3328 形状由本项目固定 362 token、SwiGLU 和 RTX 4090 Laptop 实测决定，不直接照搬图像模型参数。
 
-```text
-y = W_d h + gamma * A(c) (B(c) h) / sqrt(8)
-```
-
-其中 `c` 是当前局面的全局 token；每个局面生成一组 `A(c) ∈ R^(1024×8)` 与 `B(c) ∈ R^(8×2816)`，该局面的 361 个棋盘 token 共享这组矩阵。超网络使用 RMSNorm、宽度 128 的 SiLU 隐藏层和两个独立输出头，rank 固定为 8；启用后总参数约 3.25 亿。
-
-稳定约束如下：
-
-- A、B 原始输出经 `tanh` 有界化，并按各自输入维度缩放；B 输出头权重与 bias 零初始化，保证动态残差从零开始。
-- 传入超网络的上下文在反向时使用 `stopgrad(c) + 0.1 * (c - stopgrad(c))`，把回到主干的上下文梯度缩放到 `0.1`。
-- 超网络参数使用主干学习率的 `0.1` 倍，独立梯度范数上限为 `0.1`。
-- 启用实验后先冻结超网络 2,000 个优化器步骤，再用 10,000 步把 `gamma` 从 0 线性升到 1。
-- 任一模型输出、损失或梯度出现 NaN/Inf 时立即保存故障 checkpoint 并停止，不自动重置 `slow` 或加载旧模型。
-
-该实验的动机、关闭边界和可变部分同时记录在[实验点子](ideas.md)中。
+论文 PDF、官方来源与 SHA-256 见 [`paper/README.md`](../paper/README.md)。这些结构当前只完成正确性、稳定性、吞吐和显存验证，不声称提升棋力。
 
 ## 参考
 
@@ -202,3 +216,12 @@ y = W_d h + gamma * A(c) (B(c) h) / sqrt(8)
 - [RoPE-ViT](https://arxiv.org/abs/2403.13298)
 - [Accelerating Self-Play Learning in Go](https://arxiv.org/abs/1902.10565)
 - [KataGo 自博弈配置参考](https://github.com/lightvector/KataGo/blob/master/cpp/configs/training/selfplay1.cfg)
+- [CaiT](https://arxiv.org/abs/2103.17239)
+- [DeepNet](https://arxiv.org/abs/2203.00555)
+- [ReZero](https://arxiv.org/abs/2003.04887)
+- [DenseFormer](https://papers.nips.cc/paper_files/paper/2024/file/f67449c7ab72f441d3a713b046c6818c-Paper-Conference.pdf)
+- [HyperNetworks](https://arxiv.org/abs/1609.09106)
+- [HyperFormer](https://arxiv.org/abs/2106.04489)
+- [Hyperfan](https://openreview.net/forum?id=H1lma24tPB)
+- [PyTorch CPU/non-blocking transfer 教程](https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html)
+- [Getting ViT in Shape / SoViT](https://arxiv.org/abs/2305.13035)

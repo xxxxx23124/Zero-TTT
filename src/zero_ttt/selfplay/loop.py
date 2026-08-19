@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from zero_ttt.config import ExperimentConfig
+from zero_ttt.model.transformer import PolicyValueTransformer
 from zero_ttt.replay.sampler import ReplaySampler
 from zero_ttt.replay.sqlite_store import ReplayStore
 from zero_ttt.search.inference import InferenceServer, TorchBatchEvaluator
@@ -51,14 +52,25 @@ class CoreLoop:
         if latest is not None:
             self.trainer.restore(latest, self.rng)
         else:
-            self.save()
             self.trainer.publish()
-        batch_backend = TorchBatchEvaluator(
-            self.trainer.slow,
+            self.save()
+        current_publication = self.checkpoints.current_publication()
+        if current_publication is None:
+            raise RuntimeError("checkpoint exists without a current publication")
+        publication = self.checkpoints.load_publication(current_publication)
+        if publication["config_sha256"] != config.sha256:
+            raise ValueError("publication configuration does not match this run")
+        if publication["model_version"] != self.trainer.state.last_published_step:
+            raise ValueError("publication version does not match trainer state")
+        inference_model = PolicyValueTransformer(config.model)
+        inference_model.load_state_dict(publication["slow_state"])
+        self.batch_backend = TorchBatchEvaluator(
+            inference_model,
             config.runtime,
             config.search.max_batch_size,
+            publication["model_version"],
         )
-        self.inference = InferenceServer(batch_backend, config.search)
+        self.inference = InferenceServer(self.batch_backend, config.search)
         self.actor = SelfPlayActor(config, self.inference)
         self.metrics_path = config.run_dir / "metrics.jsonl"
 
@@ -69,7 +81,7 @@ class CoreLoop:
 
     def selfplay_phase(self, games: int | None = None) -> tuple[int, int]:
         count = self.config.selfplay.games_per_cycle if games is None else games
-        model_version = self.trainer.state.optimizer_step
+        model_version = self.batch_backend.model_version
         positions = 0
         for _ in range(count):
             game = self.actor.play_game(model_version, self.rng)
@@ -96,12 +108,25 @@ class CoreLoop:
         interval = self.config.training.publish_interval
         if previous // interval < self.trainer.state.optimizer_step // interval:
             publication = self.trainer.publish()
+            publication_payload = self.checkpoints.load_publication(publication)
+            self._replace_publication(publication_payload)
             self.save()
             self._log(
                 "publication",
                 {"step": self.trainer.state.optimizer_step, "path": str(publication)},
             )
         return metrics
+
+    def _replace_publication(self, publication: dict) -> None:
+        if publication["config_sha256"] != self.config.sha256:
+            raise ValueError("publication configuration does not match this run")
+        self.inference.close()
+        self.batch_backend.load_publication(
+            publication["slow_state"],
+            publication["model_version"],
+        )
+        self.inference = InferenceServer(self.batch_backend, self.config.search)
+        self.actor = SelfPlayActor(self.config, self.inference)
 
     def train_for_new_positions(self, new_positions: int) -> list[StepMetrics]:
         if self.replay.position_count < self.config.selfplay.minimum_replay_positions:

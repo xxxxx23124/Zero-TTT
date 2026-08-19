@@ -27,12 +27,24 @@ class TorchBatchEvaluator(BatchEvaluator):
         model: PolicyValueTransformer,
         runtime: RuntimeConfig,
         max_batch_size: int,
+        model_version: int,
     ) -> None:
         self.device = torch.device(runtime.device)
-        self.model = model.to(self.device).eval()
+        self.model_dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
+        self.model = model.to(self.device, dtype=self.model_dtype).eval().requires_grad_(False)
         self.max_batch_size = max_batch_size
+        self.model_version = model_version
         if runtime.compile_model:
             self.model.compile(dynamic=False, mode=runtime.compile_mode)
+
+    def load_publication(
+        self,
+        slow_state: dict[str, torch.Tensor],
+        model_version: int,
+    ) -> None:
+        self.model.load_state_dict(slow_state)
+        self.model.eval().requires_grad_(False)
+        self.model_version = model_version
 
     @staticmethod
     def _bucket_size(size: int, maximum: int) -> int:
@@ -46,7 +58,11 @@ class TorchBatchEvaluator(BatchEvaluator):
         states: Sequence[GameState],
         model_version: int,
     ) -> list[Evaluation]:
-        del model_version
+        if model_version != self.model_version:
+            raise ValueError(
+                f"requested model_version={model_version}, "
+                f"but evaluator has model_version={self.model_version}"
+            )
         if not states or len(states) > self.max_batch_size:
             raise ValueError("invalid inference batch size")
         encoded = [encode_position(state) for state in states]

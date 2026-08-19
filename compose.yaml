@@ -21,6 +21,7 @@ services:
       - uv-cache:/cache/uv
     environment:
       PIP_CACHE_DIR: /cache/pip
+      PYTHONPATH: /workspace/src
     command: ["/bin/bash"]
 
 volumes:

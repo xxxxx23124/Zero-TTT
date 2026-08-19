@@ -10,8 +10,9 @@ import pytest
 from zero_ttt.config import load_config
 from zero_ttt.game.rules import ACTION_SIZE, PASS_ACTION
 from zero_ttt.game.state import GameState
+from zero_ttt.model.transformer import PolicyValueTransformer
 from zero_ttt.search.cache import EvaluationCache
-from zero_ttt.search.inference import InferenceServer
+from zero_ttt.search.inference import InferenceServer, TorchBatchEvaluator
 from zero_ttt.search.protocol import Evaluation
 from zero_ttt.search.tree import PythonMCTS, SearchEdge, SearchNode, terminal_value
 
@@ -189,6 +190,18 @@ def test_inference_queue_deduplicates_and_cache_is_versioned() -> None:
         assert backend.calls == 1
         server.evaluate(state, 2)
         assert backend.calls == 2
+
+
+def test_torch_evaluator_rejects_a_mismatched_publication_version() -> None:
+    config = load_config("configs/test.toml")
+    backend = TorchBatchEvaluator(
+        PolicyValueTransformer(config.model),
+        config.runtime,
+        config.search.max_batch_size,
+        model_version=7,
+    )
+    with pytest.raises(ValueError, match="requested model_version=8"):
+        backend.evaluate_batch([_state()], model_version=8)
 
 
 def test_cache_identity_includes_pass_and_feature_history() -> None:

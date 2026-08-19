@@ -34,7 +34,7 @@ def update_slow_weights(
             dtype=slow_tensor.dtype,
         )
         slow_tensor.mul_(decay).add_(fast_tensor, alpha=1.0 - decay)
-    # RoPE frequencies and the hypernetwork ramp are state, not learned weights.
+    # RoPE frequencies and other persistent buffers are state, not learned weights.
     for name, slow_tensor in slow_buffers.items():
         fast_tensor = fast_buffers[name].detach().to(
             device=slow_tensor.device,
