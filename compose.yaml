@@ -24,6 +24,65 @@ services:
       PYTHONPATH: /workspace/src
     command: ["/bin/bash"]
 
+  katago-version:
+    profiles: ["katago"]
+    build:
+      context: .
+      dockerfile: docker/katago/Dockerfile
+    image: zero-ttt/katago:v1.17.2-cuda13.2
+    command: ["version"]
+
+  katago-analysis:
+    profiles: ["katago"]
+    build:
+      context: .
+      dockerfile: docker/katago/Dockerfile
+    image: zero-ttt/katago:v1.17.2-cuda13.2
+    gpus: all
+    init: true
+    stdin_open: true
+    volumes:
+      - type: bind
+        source: ./models/katago
+        target: /models
+        read_only: true
+      - type: bind
+        source: ./configs/katago
+        target: /config
+        read_only: true
+    command:
+      - analysis
+      - -model
+      - /models/${KATAGO_MODEL_FILE:-model.bin.gz}
+      - -config
+      - /config/analysis.cfg
+
+  katago-gtp:
+    profiles: ["katago"]
+    build:
+      context: .
+      dockerfile: docker/katago/Dockerfile
+    image: zero-ttt/katago:v1.17.2-cuda13.2
+    gpus: all
+    init: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - type: bind
+        source: ./models/katago
+        target: /models
+        read_only: true
+      - type: bind
+        source: ./configs/katago
+        target: /config
+        read_only: true
+    command:
+      - gtp
+      - -model
+      - /models/${KATAGO_MODEL_FILE:-model.bin.gz}
+      - -config
+      - /config/gtp.cfg
+
 volumes:
   huggingface-cache:
   pip-cache:

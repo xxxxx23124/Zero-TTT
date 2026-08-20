@@ -1,37 +1,38 @@
 # Zero-TTT 文档索引
 
-Zero-TTT 当前是一项个人学习、实践和娱乐性质的 19×19 围棋 AI 工程。文档按照“当前主线、可变点子、实际记录、历史归档”分开维护，避免把尚未验证的灵感写成已经确定的设计。
+文档区只描述可验证的当前状态、已接受的设计和明确标注的未来工作。单个 Markdown 文件
+不得超过 150 行或 12 KiB；主题变大时继续拆分。
 
-## 当前主线
+## 当前架构
 
-| 文档 | 职责 | 更新方式 |
-| --- | --- | --- |
-| [实施计划](implementation_plan.md) | 当前阶段、交付物、验收条件和后续路线 | 随实现进展调整 |
-| [模型与搜索设计](model_search_design.md) | Transformer、训练权重、MCTS、回放、配置和性能规格 | 改变主线实现语义时同步更新 |
-| [设计决策](design_decisions.md) | 已经形成稳定约束的项目选择及理由 | 追加记录；被替代时保留历史 |
-| [根目录 README](../README.md) | 面向访问者的项目定位、状态、文档入口和开发环境 | 只保留当前有效信息 |
+- [系统边界](architecture/overview.md)
+- [模型与训练](architecture/model-and-training.md)
+- [公共契约](architecture/contracts.md)
+- [Docker 运维](operations/docker.md)
 
-## 实验点子
+## 训练路线
 
-[实验点子](ideas.md)用于记录未经证明、允许频繁修改甚至随时放弃的玩法。这里的内容不是项目承诺，也不意味着已经实现或有效。
+- [阶段一：离线模仿](workflows/offline-imitation.md)
+- [阶段二：在线对战与蒸馏](workflows/online-distillation.md)
+- [项目路线图](roadmap/README.md)
 
-原“三速大脑”点子已经被 GPU `fast`、CPU FP32 `slow` EMA 和 GPU BF16 publication 的明确生命周期取代，不再维护锚点或运行竞技门控。当前 625M 默认实验配方在 32 层主干的后 16 层加入共享低秩超网络，并使用稀疏 DenseFormer DWA；`configs/rtx4090l_baseline.toml` 可同时关闭两者。
+## 外部集成
 
-## 开发日志
+- [KataGo](integrations/katago.md)
+- [MCTS 兼容性](integrations/mcts-compatibility.md)
+- [局域网教师协议](integrations/lan-teacher.md)
 
-[开发日志](devlog/README.md)按日期记录已经发生的实现工作、实验配置、结果和问题。失败实验同样保留；计划和猜想不能代替实际结果。
+## 未来研究
 
-## 历史归档
+- [快权重总览](research/fast-weights/overview.md)
+- [历史与战略记忆](research/fast-weights/trajectory-memory.md)
+- [搜索摘要记忆](research/fast-weights/search-memory.md)
+- [实验与风险](research/fast-weights/evaluation.md)
 
-[2026 年快记忆研究设计](archive/fast-memory-2026/README.md)保存项目早期关于 MCTS 搜索经验压缩、TTT 和双私有神经快记忆的完整研究包。该方向因复杂度暂停，而不是被否定或删除。
+## 项目记录
 
-`third_party/e2e`、`third_party/ttt-lm-pytorch` 和 `third_party/In-Place-TTT` 继续保留在原路径，作为这一长期方向的参考代码；它们不是当前主线依赖。
+- [架构决策](decisions/README.md)
+- [开发日志](devlog/README.md)
+- [论文清单](../paper/README.md)
 
-## 维护规则
-
-- 已经确定且会长期影响实现的选择写入 `design_decisions.md`。
-- 尚未确定、只想尝试的方案写入 `ideas.md`。
-- 当前默认模型、搜索预算、训练批量和更新频率写入 `model_search_design.md`，运行时以版本化 TOML 为唯一事实来源；每次实际运行把配置哈希、checkpoint 和结果写入开发日志。
-- 数据源必须记录许可、格式、过滤条件和校验统计；许可不清楚的数据不进入正式流程。
-- 实际完成的工作写入 `devlog/`，不能把计划状态描述成已经实现。
-- 归档文件保持历史原貌；如果旧方向重新启动，应新增当前决策，而不是静默改写归档。
+用 `python scripts/check_docs.py` 检查大小和本地链接；该命令只作为 Docker 容器内命令维护。

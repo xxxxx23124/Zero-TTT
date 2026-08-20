@@ -85,46 +85,6 @@ class TrainingConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class SearchConfig:
-    num_threads: int
-    max_batch_size: int
-    batch_delay_ms: float
-    inference_cache_size: int
-    c_puct: float
-    fpu_reduction: float
-    virtual_loss: int
-    dirichlet_weight: float
-    dirichlet_total_concentration: float
-    budget_1: int
-    budget_2: int
-    budget_3: int
-    budget_4: int
-    entropy_threshold: float
-    gap_threshold_1: float
-    gap_threshold_2: float
-    gap_threshold_3: float
-    temperature_moves: int
-
-    @property
-    def budgets(self) -> tuple[int, int, int, int]:
-        return (self.budget_1, self.budget_2, self.budget_3, self.budget_4)
-
-
-@dataclass(frozen=True, slots=True)
-class ReplayConfig:
-    capacity_positions: int
-    database_name: str
-    decoded_cache_games: int
-
-
-@dataclass(frozen=True, slots=True)
-class SelfPlayConfig:
-    games_per_cycle: int
-    minimum_replay_positions: int
-    train_samples_per_new_position: float
-
-
-@dataclass(frozen=True, slots=True)
 class RuntimeConfig:
     run_dir: str
     device: str
@@ -141,9 +101,6 @@ class ExperimentConfig:
     game: GameConfig
     model: ModelConfig
     training: TrainingConfig
-    search: SearchConfig
-    replay: ReplayConfig
-    selfplay: SelfPlayConfig
     runtime: RuntimeConfig
 
     def canonical_json(self) -> str:
@@ -218,7 +175,7 @@ def _construct_dataclass(cls: type[T], data: dict[str, Any], path: str) -> T:
 
 
 def validate_config(config: ExperimentConfig) -> None:
-    if config.schema_version != 2:
+    if config.schema_version != 3:
         raise ValueError(f"unsupported schema_version={config.schema_version}")
     if config.game.board_size != 19:
         raise ValueError("only 19x19 is supported")
@@ -264,6 +221,7 @@ def validate_config(config: ExperimentConfig) -> None:
         train.accumulation_steps,
         train.learning_rate,
         train.eps,
+        train.warmup_steps,
         train.gradient_clip,
         train.ema_half_life_samples,
         train.ema_update_interval,
@@ -274,17 +232,6 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("training sizes, rates, intervals, and limits must be positive")
     if not (0 < train.beta1 < 1 and 0 < train.beta2 < 1):
         raise ValueError("AdamW beta values must be in (0, 1)")
-    search = config.search
-    if search.num_threads <= 0 or search.max_batch_size <= 0:
-        raise ValueError("search threads and batch size must be positive")
-    if sorted(search.budgets) != list(search.budgets) or search.budget_1 <= 0:
-        raise ValueError("search budgets must be positive and non-decreasing")
-    if not (0 <= search.dirichlet_weight <= 1):
-        raise ValueError("search.dirichlet_weight must be in [0, 1]")
-    if config.replay.capacity_positions <= 0 or config.replay.decoded_cache_games <= 0:
-        raise ValueError("replay limits must be positive")
-    if config.selfplay.games_per_cycle <= 0:
-        raise ValueError("selfplay.games_per_cycle must be positive")
     if config.runtime.device not in {"cpu", "cuda"}:
         raise ValueError("runtime.device must be 'cpu' or 'cuda'")
     if config.runtime.ema_device not in {"cpu", "cuda"}:

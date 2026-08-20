@@ -1,4 +1,4 @@
-schema_version = 2
+schema_version = 3
 run_name = "test"
 seed = 7
 
@@ -57,36 +57,6 @@ ema_half_life_samples = 32
 ema_update_interval = 1
 publish_interval = 2
 checkpoint_keep = 2
-
-[search]
-num_threads = 2
-max_batch_size = 2
-batch_delay_ms = 1.0
-inference_cache_size = 128
-c_puct = 1.5
-fpu_reduction = 0.2
-virtual_loss = 1
-dirichlet_weight = 0.25
-dirichlet_total_concentration = 10.83
-budget_1 = 1
-budget_2 = 2
-budget_3 = 3
-budget_4 = 4
-entropy_threshold = 0.35
-gap_threshold_1 = 0.30
-gap_threshold_2 = 0.20
-gap_threshold_3 = 0.10
-temperature_moves = 2
-
-[replay]
-capacity_positions = 50
-database_name = "replay.sqlite3"
-decoded_cache_games = 4
-
-[selfplay]
-games_per_cycle = 2
-minimum_replay_positions = 2
-train_samples_per_new_position = 1.0
 
 [runtime]
 run_dir = "runs/test"

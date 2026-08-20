@@ -33,7 +33,7 @@ def board_with(stones: dict[int, Color]) -> bytes:
     return bytes(board)
 
 
-def test_capture_and_suicide() -> None:
+def test_capture_and_single_stone_suicide() -> None:
     center = point(1, 1)
     capture_at = point(2, 1)
     board = board_with(
@@ -58,6 +58,46 @@ def test_capture_and_suicide() -> None:
         }
     )
     assert play_point(suicide_board, Color.WHITE, center, {suicide_board}) is None
+
+
+def test_tromp_taylor_allows_multi_stone_suicide() -> None:
+    old_stone = point(1, 1)
+    action = point(2, 1)
+    board = board_with(
+        {
+            old_stone: Color.WHITE,
+            point(0, 1): Color.BLACK,
+            point(1, 0): Color.BLACK,
+            point(1, 2): Color.BLACK,
+            point(2, 0): Color.BLACK,
+            point(2, 2): Color.BLACK,
+            point(3, 1): Color.BLACK,
+        }
+    )
+    result = play_point(board, Color.WHITE, action, {board})
+    assert result is not None
+    assert result[old_stone] == 0
+    assert result[action] == 0
+    assert legal_actions(board, Color.WHITE, {board})[action]
+
+
+def test_positional_superko_can_forbid_multi_stone_suicide_result() -> None:
+    old_stone = point(1, 1)
+    action = point(2, 1)
+    board = board_with(
+        {
+            old_stone: Color.WHITE,
+            point(0, 1): Color.BLACK,
+            point(1, 0): Color.BLACK,
+            point(1, 2): Color.BLACK,
+            point(2, 0): Color.BLACK,
+            point(2, 2): Color.BLACK,
+            point(3, 1): Color.BLACK,
+        }
+    )
+    result = play_point(board, Color.WHITE, action, {board})
+    assert result is not None
+    assert play_point(board, Color.WHITE, action, {board, result}) is None
 
 
 def test_one_move_can_capture_multiple_groups() -> None:

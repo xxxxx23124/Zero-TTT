@@ -7,3 +7,6 @@
 [submodule "third_party/In-Place-TTT"]
 	path = third_party/In-Place-TTT
 	url = https://github.com/ByteDance-Seed/In-Place-TTT.git
+[submodule "third_party/KataGo"]
+	path = third_party/KataGo
+	url = https://github.com/lightvector/KataGo.git

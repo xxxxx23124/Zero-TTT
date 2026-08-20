@@ -1,99 +1,49 @@
 # Zero-TTT
 
-Zero-TTT 是一个面向个人学习、实践和娱乐的围棋 AI 项目。
+Zero-TTT 是一个仅在 Docker 中维护的 19×19 围棋学生模型训练研究项目。项目保留
+Transformer、通用训练器、EMA、checkpoint 和棋规；不再维护自己的 MCTS。官方 KataGo
+作为独立的强教师和 GTP 引擎。
 
-项目近期目标是在标准 19×19 棋盘上完成一套 AlphaZero 风格的训练与对弈闭环。当前已经有 Python 参考实现打通围棋规则、棋盘 Transformer、批量 MCTS、自博弈、SQLite 回放、GPU `fast` 训练、CPU FP32 EMA、GPU BF16 发布推理和恢复；开源棋谱预训练与 GTP 是后续独立阶段。
+## 当前可用
 
-这里不是严格的 AlphaZero 复现，也不以论文结论、排行榜成绩或最强棋力为目标。比起证明某个点子一定有效，项目更看重：能运行、能理解、能玩，并且方便随时加入一些有趣但未必成熟的实验。
+- 625M 与全关闭基线的策略—价值 Transformer 配置。
+- Tromp–Taylor 棋规、特征编码、模型损失和通用 `BatchSource` 训练接口。
+- 合成数据驱动的模型/训练冒烟测试。
+- 固定到 v1.17.2 的 KataGo CUDA 镜像、Analysis Engine 与 GTP 服务入口。
 
-## 当前状态
+尚未实现：棋谱导入、学生自博弈、在线蒸馏、局域网教师、快权重，以及让 KataGo
+直接搜索 Zero-TTT Transformer。路线图中的“未来”内容不代表现有功能。
 
-- 里程碑 1、4、5 的首版参考实现，以及里程碑 7 的共享超网络和稀疏 DenseFormer DWA 已进入 `src/zero_ttt/`。
-- 当前工程主线是 19×19 围棋 AlphaZero 风格基线。
-- 默认模型规格面向 RTX 4090 Laptop 16 GB：625,357,745 参数，32 层、`d_model=1280`、20 头、`d_ff=3328`，后 16 层使用共享 rank-8 超网络，并启用稀疏 DWA；620,432,901 参数的同主干全关闭基线见 `configs/rtx4090l_baseline.toml`。
-- tiny 配置的“自博弈 → 回放 → 优化 → EMA → 发布 → 恢复”自动化测试已经通过；625M 默认模型在三副本、batch 16、累积 16、连续 16 个优化器步下实测峰值 allocated/reserved 为 13.062/14.246 GiB，正式验收记录在开发日志。
-- 首个可玩成果计划提供 GTP v2 接口，可接入 Sabaki、q5Go 等棋盘软件。
-- 原有的 TTT / 神经快记忆方向已经暂停并归档，但没有被放弃；未来条件成熟时仍可能重新探索。
-
-## 路线概览
-
-1. 已实现并测试 19×19 No-Suicide Tromp–Taylor 规则、状态与共享特征。
-2. 已实现棋盘 Transformer、Python PUCT MCTS 和单 GPU 分阶段自博弈训练闭环。
-3. 用极小固定数据集做过拟合测试，并补充长期吞吐与恢复压力测试。
-4. 通过统一 `GameSource → GameRecord → ReplayStore` 边界接入许可清晰的开源棋谱并做监督预训练。
-5. 提供 GTP 引擎，完成实际人机对弈。
-6. 比较默认开启的共享低秩超网络、DenseFormer DWA 与全关闭基线，观察稳定性、吞吐和棋力。
-
-闭环不设置候选模型对冠军模型的竞技评估或晋升门槛。GPU `fast` 权重接受梯度，CPU FP32 `slow` 权重通过 EMA 跟随；自博弈使用从 `slow` 发布的独立 GPU BF16 副本。验证指标只用于暴露问题，不阻塞训练或触发自动回退。
-
-具体阶段、交付物和验收条件见[实施计划](docs/implementation_plan.md)，模型、训练和搜索参数见[模型与搜索设计](docs/model_search_design.md)。未经验证、允许频繁修改的想法单独记录在[实验点子](docs/ideas.md)中。
-
-## 本地验证
+## 初始化与验证
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m pytest
-zero-ttt smoke --config configs/test.toml
+git submodule update --init --recursive
+docker compose build dev
+docker compose run --rm dev python -m pytest -q
+docker compose run --rm dev python scripts/check_docs.py
+docker compose run --rm dev zero-ttt config-check --config configs/test.toml
+docker compose run --rm dev zero-ttt train-smoke --config configs/test.toml
 ```
 
-`loop`、`selfplay` 和 `train` 同样只接受一个版本化 TOML 文件，不提供逐项命令行或环境变量覆盖。例如 `zero-ttt selfplay --config configs/test.toml` 会在 `runs/test/` 生成可恢复状态。正式默认配方使用 `configs/rtx4090l.toml`，结构基线使用 `configs/rtx4090l_baseline.toml`。
+项目不保证宿主机 Python、CUDA 或编译器环境可用。所有正式命令均以 Compose 服务为入口。
 
-## 文档
+## KataGo
+
+```bash
+docker compose --profile katago build katago-version
+docker compose --profile katago run --rm katago-version
+```
+
+Analysis/GTP 需要用户自行把权重放入 `models/katago/`。参见
+[KataGo 集成说明](docs/integrations/katago.md)与[Docker 运维](docs/operations/docker.md)。
+
+## 文档入口
 
 - [文档索引](docs/README.md)
-- [实施计划](docs/implementation_plan.md)
-- [模型与搜索设计](docs/model_search_design.md)
-- [设计决策](docs/design_decisions.md)
-- [实验点子](docs/ideas.md)
-- [开发日志](docs/devlog/README.md)
-- [旧快记忆研究归档](docs/archive/fast-memory-2026/README.md)
+- [目标架构](docs/architecture/overview.md)
+- [离线模仿](docs/workflows/offline-imitation.md)
+- [在线蒸馏](docs/workflows/online-distillation.md)
+- [快权重研究](docs/research/fast-weights/overview.md)
+- [论文索引](paper/README.md)
 
-## Docker GPU 开发环境
-
-项目提供基于 PyTorch 2.13.0、CUDA 13.2 和 cuDNN 9 的 Linux 开发容器。镜像包含 NVCC、C/C++ 编译器和 Ninja，可用于后续编译自定义 CUDA 扩展。
-
-宿主机需要：
-
-- NVIDIA GPU 和兼容 CUDA 13.x 的驱动；
-- 使用 WSL 2 后端且已启用 GPU 支持的 Docker Desktop；
-- 足够的镜像空间（基础开发镜像压缩后约 11 GB）。
-
-CUDA Toolkit 和 cuDNN 已包含在容器中，宿主机不需要另外安装它们。
-
-### 构建和进入容器
-
-```bash
-docker compose build
-docker compose run --rm dev
-```
-
-项目源码会挂载到容器的 `/workspace`。Hugging Face、pip、Torch 扩展和 uv 的缓存保存在 Docker 命名卷中，删除临时容器或重新构建镜像不会清空缓存。
-
-### 验证 GPU 环境
-
-```bash
-docker compose run --rm dev nvidia-smi
-docker compose run --rm dev python scripts/docker_smoke_test.py
-docker compose run --rm dev python -m pytest
-docker compose run --rm dev python scripts/model_smoke_test.py
-```
-
-第一项冒烟测试检查源码挂载、NVCC、PyTorch/CUDA/cuDNN 版本、GPU 型号与计算能力。模型冒烟脚本分别运行默认和全关闭基线，覆盖 GPU `fast`、CPU FP32 EMA、GPU BF16 推理副本、fused AdamW、逐 block 训练 compile、batch 16 前后向和 EMA 更新；默认配置连续运行 16 个累积 16 的优化器步，使 EMA 按正式间隔自然触发，并强制检查峰值保留显存不超过 14.5 GiB。
-
-### 维护命令
-
-```bash
-# 拉取基础镜像并重新构建
-docker compose build --pull
-
-# 不使用 Docker 构建缓存，完整重建
-docker compose build --pull --no-cache
-
-# 停止由 Compose 启动的服务，保留下载和编译缓存
-docker compose down
-
-# 停止服务并永久删除项目的 Docker 命名卷缓存
-docker compose down --volumes
-```
-
-当前镜像只提供主项目的 PyTorch GPU 开发基座，不会自动安装 `third_party` 中各参考项目彼此不同的依赖。现有三个 TTT 相关子模块是长期方向的历史参考，不是当前 AlphaZero 主线的运行时依赖。
+许可证：MIT。第三方源码和模型权重遵循各自的许可证。

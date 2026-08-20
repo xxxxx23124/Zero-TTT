@@ -12,3 +12,4 @@ build
 dist
 tmp
 *.pdf
+models/katago

@@ -12,8 +12,8 @@ import torch
 from torch import nn
 
 from zero_ttt.config import ExperimentConfig
+from zero_ttt.data.contracts import BatchSource, TrainBatch
 from zero_ttt.model.transformer import PolicyValueTransformer
-from zero_ttt.replay.sampler import ReplaySampler, SampledBatch
 from zero_ttt.training.checkpoint import CheckpointManager, checkpoint_metadata
 from zero_ttt.training.ema import update_slow_weights
 from zero_ttt.training.losses import TrainingTargets, compute_losses
@@ -125,7 +125,7 @@ class Trainer:
                 group["lr"] = learning_rate
         return learning_rate
 
-    def _tensor_batch(self, batch: SampledBatch) -> tuple[torch.Tensor, ...]:
+    def _tensor_batch(self, batch: TrainBatch) -> tuple[torch.Tensor, ...]:
         arrays = (
             batch.board,
             batch.global_features,
@@ -152,7 +152,7 @@ class Trainer:
 
     def train_optimizer_step(
         self,
-        sampler: ReplaySampler,
+        source: BatchSource,
         rng: np.random.Generator,
     ) -> StepMetrics:
         self.fast.train()
@@ -168,7 +168,7 @@ class Trainer:
         )
         try:
             for _ in range(accumulation):
-                batch = sampler.sample_batch(self.config.training.batch_size, rng)
+                batch = source.next_batch(self.config.training.batch_size, rng)
                 (
                     board,
                     global_features,
@@ -271,10 +271,10 @@ class Trainer:
     def train_steps(
         self,
         count: int,
-        sampler: ReplaySampler,
+        source: BatchSource,
         rng: np.random.Generator,
     ) -> list[StepMetrics]:
-        return [self.train_optimizer_step(sampler, rng) for _ in range(count)]
+        return [self.train_optimizer_step(source, rng) for _ in range(count)]
 
     def checkpoint_payload(self, rng: np.random.Generator | None = None) -> dict[str, Any]:
         payload = {
@@ -292,10 +292,8 @@ class Trainer:
     def save_checkpoint(
         self,
         rng: np.random.Generator | None = None,
-        replay_metadata: dict[str, Any] | None = None,
     ):
         payload = self.checkpoint_payload(rng)
-        payload["replay_metadata"] = replay_metadata
         return self.checkpoints.save_full(
             self.state.optimizer_step,
             payload,

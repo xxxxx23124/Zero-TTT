@@ -1,4 +1,4 @@
-"""No-suicide Tromp-Taylor rule primitives for a fixed 19x19 board."""
+"""Tromp-Taylor rule primitives for a fixed 19x19 board."""
 
 from __future__ import annotations
 
@@ -119,9 +119,11 @@ def play_point(
         for stone in analysis.group_stones[group_id]:
             mutable[stone] = EMPTY
     stones, liberties = _collect_group(mutable, action)
-    del stones
     if not liberties:
-        return None
+        # Tromp-Taylor permits multi-stone suicide. A single-stone suicide
+        # recreates the current board and is rejected by positional superko.
+        for stone in stones:
+            mutable[stone] = EMPTY
     result = bytes(mutable)
     if result in position_history:
         return None

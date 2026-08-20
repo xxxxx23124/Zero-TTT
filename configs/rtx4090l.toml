@@ -1,4 +1,4 @@
-schema_version = 2
+schema_version = 3
 run_name = "rtx4090l-625m"
 seed = 20260818
 
@@ -57,36 +57,6 @@ ema_half_life_samples = 1048576
 ema_update_interval = 16
 publish_interval = 256
 checkpoint_keep = 2
-
-[search]
-num_threads = 16
-max_batch_size = 16
-batch_delay_ms = 1.0
-inference_cache_size = 100000
-c_puct = 1.5
-fpu_reduction = 0.2
-virtual_loss = 1
-dirichlet_weight = 0.25
-dirichlet_total_concentration = 10.83
-budget_1 = 256
-budget_2 = 512
-budget_3 = 768
-budget_4 = 1024
-entropy_threshold = 0.35
-gap_threshold_1 = 0.30
-gap_threshold_2 = 0.20
-gap_threshold_3 = 0.10
-temperature_moves = 30
-
-[replay]
-capacity_positions = 2000000
-database_name = "replay.sqlite3"
-decoded_cache_games = 64
-
-[selfplay]
-games_per_cycle = 16
-minimum_replay_positions = 4096
-train_samples_per_new_position = 1.0
 
 [runtime]
 run_dir = "runs/rtx4090l-625m"

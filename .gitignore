@@ -228,3 +228,8 @@ __marimo__/
 # Zero-TTT runtime state
 /runs/
 /.vscode
+
+# User-provided KataGo networks. Keep only documentation and the manifest template.
+/models/katago/*
+!/models/katago/README.md
+!/models/katago/manifest.example.toml

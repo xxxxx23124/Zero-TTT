@@ -5,13 +5,11 @@ import torch
 from torch import nn
 
 from zero_ttt.config import load_config
+from zero_ttt.data.synthetic import SyntheticBatchSource
 from zero_ttt.model.transformer import PolicyValueTransformer
-from zero_ttt.replay.sampler import ReplaySampler
-from zero_ttt.replay.sqlite_store import ReplayStore
 from zero_ttt.training.checkpoint import CheckpointManager
 from zero_ttt.training.ema import ema_decay, update_slow_weights
 from zero_ttt.training.trainer import Trainer, parameters_are_finite
-from test_replay import make_record
 
 
 def test_sample_based_ema_uses_equivalent_batched_decay() -> None:
@@ -71,32 +69,28 @@ def test_one_optimizer_step_ema_publish_and_restore(tmp_path) -> None:
     config = load_config("configs/test.toml")
     run_dir = tmp_path / "run"
     manager = CheckpointManager(run_dir, keep=config.training.checkpoint_keep)
-    with ReplayStore(
-        tmp_path / "replay.sqlite3",
-        capacity_positions=20,
-        decoded_cache_games=2,
-    ) as store:
-        store.add_game(make_record(length=4))
-        sampler = ReplaySampler(store, decoded_cache_games=2)
-        rng = np.random.default_rng(8)
-        trainer = Trainer(config, manager, PolicyValueTransformer(config.model))
-        metrics = trainer.train_optimizer_step(sampler, rng)
-        assert metrics.step == 1
-        assert np.isfinite(metrics.total_loss)
-        assert metrics.hyper_gradient_norm is not None
-        assert metrics.ema_update_seconds is not None
-        assert trainer.state.samples_seen == (
-            config.training.batch_size * config.training.accumulation_steps
-        )
-        checkpoint = trainer.save_checkpoint(rng)
-        publication = trainer.publish()
-        assert trainer.slow.cls_token.device.type == "cpu"
-        saved_parameter = next(trainer.fast.parameters()).detach().clone()
-        with torch.no_grad():
-            next(trainer.fast.parameters()).add_(2.0)
-        trainer.restore(checkpoint, rng)
-        assert torch.equal(next(trainer.fast.parameters()), saved_parameter)
-        assert publication.exists()
-        published = torch.load(publication, map_location="cpu", weights_only=False)
-        floating = next(tensor for tensor in published["slow_state"].values() if tensor.is_floating_point())
-        assert floating.dtype == torch.bfloat16
+    source = SyntheticBatchSource()
+    rng = np.random.default_rng(8)
+    trainer = Trainer(config, manager, PolicyValueTransformer(config.model))
+    metrics = trainer.train_optimizer_step(source, rng)
+    assert metrics.step == 1
+    assert np.isfinite(metrics.total_loss)
+    assert metrics.hyper_gradient_norm is not None
+    assert metrics.ema_update_seconds is not None
+    assert trainer.state.samples_seen == (
+        config.training.batch_size * config.training.accumulation_steps
+    )
+    checkpoint = trainer.save_checkpoint(rng)
+    publication = trainer.publish()
+    assert trainer.slow.cls_token.device.type == "cpu"
+    saved_parameter = next(trainer.fast.parameters()).detach().clone()
+    with torch.no_grad():
+        next(trainer.fast.parameters()).add_(2.0)
+    trainer.restore(checkpoint, rng)
+    assert torch.equal(next(trainer.fast.parameters()), saved_parameter)
+    assert publication.exists()
+    published = torch.load(publication, map_location="cpu", weights_only=False)
+    floating = next(
+        tensor for tensor in published["slow_state"].values() if tensor.is_floating_point()
+    )
+    assert floating.dtype == torch.bfloat16

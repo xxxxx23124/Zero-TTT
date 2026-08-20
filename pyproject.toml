@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "zero-ttt"
 version = "0.1.0"
-description = "A single-GPU AlphaZero-style Go research system"
+description = "A Docker-only Go student-model training research system"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }

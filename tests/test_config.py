@@ -15,11 +15,13 @@ def test_load_test_config_is_stable() -> None:
     assert first == second
     assert first.sha256 == second.sha256
     assert first.model.d_model == 64
-    assert first.schema_version == 2
+    assert first.schema_version == 3
     assert first.model.hypernet.enabled
     assert first.model.depth_mixing.enabled
     assert first.runtime.ema_device == "cpu"
-    assert first.search.budgets == (1, 2, 3, 4)
+    assert not hasattr(first, "search")
+    assert not hasattr(first, "replay")
+    assert not hasattr(first, "selfplay")
 
 
 def test_production_and_baseline_experiment_switches() -> None:

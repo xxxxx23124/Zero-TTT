@@ -1,0 +1,8 @@
+schema_version = 1
+file_name = "model.bin.gz"
+sha256 = "REPLACE_WITH_64_HEX_CHARACTERS"
+source_url = "https://katagotraining.org/networks/"
+license = "RECORD_THE_EXACT_NETWORK_LICENSE"
+purpose = "strong_teacher"
+katago_version = "v1.17.2"
+notes = "Do not commit the model file or a manifest containing unverifiable metadata."

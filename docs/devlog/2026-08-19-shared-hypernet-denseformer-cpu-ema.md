@@ -45,8 +45,8 @@ Docker GPU 正式结果（RTX 4090 Laptop 16 GB、PyTorch 2.13.0+cu132、batch 1
 
 ## 产生的决策
 
-- [D-024](../design_decisions.md#d-024共享超网络与稀疏-dwa-进入默认实验配方)
-- [D-025](../design_decisions.md#d-025ema-固定驻留-cpu发布推理使用独立-gpu-副本)
+- [D-024](../decisions/legacy.md#d-024共享超网络与稀疏-dwa)
+- [D-025](../decisions/legacy.md#d-025cpu-ema-与独立-publication)
 
 ## 问题
 
