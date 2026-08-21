@@ -1,8 +1,9 @@
 # Zero-TTT
 
 Zero-TTT 是一个仅在 Docker 中维护的 19×19 围棋学生模型训练研究项目。项目保留
-Transformer、通用训练器、EMA、checkpoint 和棋规；不再维护自己的 MCTS。官方 KataGo
-作为独立的强教师和 GTP 引擎。
+Transformer、通用训练器、EMA、checkpoint 和本地棋规。已接受的目标架构由本项目运行
+学生纯策略自博弈，并在未来可选本地 MCTS；未修改的官方 KataGo 只作为 Human-SL/强搜索
+教师和独立 GTP 引擎。
 
 ## 当前可用
 
@@ -11,8 +12,9 @@ Transformer、通用训练器、EMA、checkpoint 和棋规；不再维护自己�
 - 合成数据驱动的模型/训练冒烟测试。
 - 固定到 v1.17.2 的 KataGo CUDA 镜像、Analysis Engine 与 GTP 服务入口。
 
-尚未实现：棋谱导入、学生自博弈、在线蒸馏、局域网教师、快权重，以及让 KataGo
-直接搜索 Zero-TTT Transformer。路线图中的“未来”内容不代表现有功能。
+尚未实现：目标 `Learner` 包、持久样本、棋谱导入、学生自博弈、分级教师、在线蒸馏、
+局域网教师、本地 MCTS 和快权重。不会修改 KataGo 来加载或搜索 Zero-TTT checkpoint；
+路线图中的“目标/未来”不代表现有功能。
 
 ## 初始化与验证
 
@@ -41,8 +43,11 @@ Analysis/GTP 需要用户自行把权重放入 `models/katago/`。参见
 
 - [文档索引](docs/README.md)
 - [目标架构](docs/architecture/overview.md)
+- [Learner 与流程边界](docs/architecture/learner-and-workflows.md)
 - [离线模仿](docs/workflows/offline-imitation.md)
 - [在线蒸馏](docs/workflows/online-distillation.md)
+- [学生自博弈](docs/workflows/student-selfplay.md)
+- [Human-SL 分级教师](docs/workflows/curriculum-teachers.md)
 - [快权重研究](docs/research/fast-weights/overview.md)
 - [论文索引](paper/README.md)
 

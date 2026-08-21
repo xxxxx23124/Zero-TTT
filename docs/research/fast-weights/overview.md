@@ -21,8 +21,9 @@
 
 ## 与搜索兼容
 
-快权重并不排斥 MCTS。一次搜索中冻结 `(slow weights, fast state, model version)`，搜索结束
-后至多写入一次；一旦写入，旧树和缓存失效。详细不变量见
+快权重并不排斥 MCTS。一次搜索中冻结
+`(base_model_version, fast_state_version, feature_schema, rules)`，搜索结束后至多写入一次；
+一旦写入，旧树和缓存失效。详细不变量见
 [MCTS 兼容性](../../integrations/mcts-compatibility.md)。
 
 风险、对照和恢复标准见[实验与风险](evaluation.md)。

@@ -16,6 +16,7 @@ YYYY-MM-DD-short-topic.md
 
 | 日期 | 主题 | 结果摘要 | 相关决策 |
 | --- | --- | --- | --- |
+| 2026-08-22 | [Learner、自博弈与分级教师文档重构](2026-08-22-learner-selfplay-curriculum.md) | 接受 Learner/采集分离、本地纯策略自博弈、可选 MCTS 与 Human-SL 课程边界；只改文档 | D-032 至 D-035 |
 | 2026-08-20 | [转向 KataGo 教师与解耦训练](2026-08-20-katago-transition.md) | 删除内部 MCTS，训练改用公共契约，KataGo/Docker 与新路线完成骨架 | D-027 至 D-031 |
 | 2026-08-19 | [正式模型扩至 625M](2026-08-19-625m-model-scale-up.md) | 32×1280×3328 默认模型 625.36M；正式累积峰值 14.246 GiB | D-026 |
 | 2026-08-19 | [共享超网络、DenseFormer 与 CPU EMA](2026-08-19-shared-hypernet-denseformer-cpu-ema.md) | schema v2、默认 313.52M 配方与三副本生命周期完成；batch 16 峰值 9.379 GiB | D-024、D-025 |
@@ -56,5 +57,5 @@ YYYY-MM-DD-short-topic.md
 
 - 日志写事实，不把预期写成已完成结果。
 - 失败实验和推翻的假设同样保留。
-- 形成长期约束的选择必须同步到 `../design_decisions.md`。
+- 形成长期约束的选择必须同步到 `../decisions/README.md`。
 - 日志引用实验产物时使用仓库相对路径，并注明生成该产物的配置或提交。

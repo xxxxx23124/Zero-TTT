@@ -9,7 +9,8 @@
 2. 首选 KataGo `g170` 的 CC0 自博弈棋谱作为冷启动语料。
 3. 解析 SGF，统一为 19×19 Tromp–Taylor，并抽取覆盖开局、中盘和终局的局面。
 4. 用固定版本强 KataGo 对抽样局面补充 policy、value、score 和可选 ownership。
-5. 数据适配器生成 `TrainBatch`；Trainer 不接触 SGF 或 KataGo JSON。
+5. 先写带标签来源与教师指纹的不可变分片，再由 `BatchSource` 生成 `TrainBatch`；目标 Learner
+   不接触 SGF 或 KataGo JSON。
 
 普通棋谱只有实战落子时，policy 可以 one-hot，但必须标记标签来源。有教师搜索分布时优先
 使用搜索分布。缺失的辅助标签使用 mask，不填假零值。
@@ -19,7 +20,7 @@
 - 首先做监督学习，正式物理 batch 保持 16，梯度积累由配置控制。
 - 训练/验证必须按棋局或来源切分，防止同局相邻状态泄漏。
 - 固定规则、贴目、随机种子、模型版本和样本 manifest 后再比较实验。
-- 进入第二阶段前，以官方 Human-SL `rank_5k` 为固定纯策略对弈基准。
+- 冷启动结果进入首个经标定的 Human-SL 课程阶段，不在本页硬编码 rank 或访问数。
 
-`rank_5k` 是工程阶段门槛而非精确人类段位声明。基准实现、对局数量、置信区间和晋级阈值
-将在实现评测器时单独固定；本轮不下载数据或运行基准。
+Human-SL profile 是工程课程标签而非精确人类段位声明。统一毕业门槛见
+[分级教师](curriculum-teachers.md)；本轮不下载数据或运行基准。
