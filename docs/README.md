@@ -9,20 +9,22 @@
 - [模型与训练](architecture/model-and-training.md)
 - [Learner 与流程边界](architecture/learner-and-workflows.md)
 - [公共契约](architecture/contracts.md)
+- [序列化训练数据](architecture/trajectory-storage.md)
 - [Docker 运维](operations/docker.md)
 
 ## 数据采集与训练路线
 
-- [阶段一：离线模仿](workflows/offline-imitation.md)
-- [阶段二：在线采集与蒸馏](workflows/online-distillation.md)
-- [学生自博弈采集](workflows/student-selfplay.md)
+- [统一训练生命周期](workflows/training-lifecycle.md)
+- [监督冷启动](workflows/offline-imitation.md)
+- [MCTS 学生自博弈](workflows/student-selfplay.md)
+- [主动选点与在线蒸馏](workflows/online-distillation.md)
 - [Human-SL 分级教师](workflows/curriculum-teachers.md)
 - [项目路线图](roadmap/README.md)
 
 ## 外部集成
 
+- [OpenSpiel MCTS](integrations/mcts-compatibility.md)
 - [KataGo](integrations/katago.md)
-- [本地 MCTS 兼容性](integrations/mcts-compatibility.md)
 - [局域网教师协议](integrations/lan-teacher.md)
 
 ## 未来研究

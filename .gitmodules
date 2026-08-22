@@ -10,3 +10,6 @@
 [submodule "third_party/KataGo"]
 	path = third_party/KataGo
 	url = https://github.com/lightvector/KataGo.git
+[submodule "third_party/open_spiel"]
+	path = third_party/open_spiel
+	url = https://github.com/google-deepmind/open_spiel.git

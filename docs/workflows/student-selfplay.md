@@ -1,39 +1,33 @@
-# 学生自博弈采集
+# MCTS 学生自博弈采集
 
-状态：已接受的目标设计，尚未实现。最近实现先做单线程、推理 batch size 1 的纯策略版本；
-本页不恢复旧 CoreLoop、replay schema 或 MCTS 源码。
+状态：已接受的目标设计，尚未实现。默认 AlphaZero 数据由 OpenSpiel Python MCTS 生成；
+纯策略对局只作为诊断、人机对战或消融，不作为默认自我改进路径。
 
-## 纯策略首版
+## 单盘流程
 
-1. 加载一个不可变 BF16 slow publication，并固定 evaluator 身份。
-2. 用本地 `GameState` 维护 19×19 Tromp–Taylor 棋局、合法着、历史和终局。
-3. 每步编码局面，执行一次 batch size 1 推理，按运行 manifest 的固定选着规则落子。
-4. 整盘不得切换 publication；保存棋步、模型版本、随机种子、选着参数和终局标签。
-5. 原始棋局与派生样本写成不可变分片，之后才由 `BatchSource` 读取或提交教师标注。
+1. 加载不可变 BF16 slow publication，整盘冻结 evaluator 与搜索配置。
+2. 用本地 `GameState` 维护 Tromp–Taylor 合法着、完整历史、终局与计分。
+3. 通过薄 `pyspiel.Game/State` 适配层让 `MCTSBot` 搜索；初始预算为每步 64 simulations，
+   标定后可提高到约 100。
+4. 自博弈根节点加入 Dirichlet 噪声，按温度从访问数选着；访问分布成为 policy 标签。
+5. 终局结果为所有有效 step 提供 value；可用的 score/ownership 按 mask 保存。
+6. 把整盘 moves、每步搜索摘要和完整身份写入逻辑 `TrajectoryRecord`，原子封存分片后才训练。
 
-纯策略自博弈首先用于发现学生实际访问的状态。把学生自己的 raw policy 再当作改进标签不会
-凭空增强策略；默认由最终结果提供 value/score/ownership 标签，policy 改进来自后续 KataGo
-标注或可选的本地 MCTS 访问分布。
+学生 raw policy 只作为 MCTS prior，不能再当作自身的改进标签。每步实际搜索预算、根 value、
+访问分布、温度、噪声和随机种子都必须可审计。
 
-## 可选本地 MCTS
+## 搜索与性能边界
 
-未来以提交 `e2b3017` 中的旧搜索代码和测试为行为参考，选择性重写：
-
-- 首版只做单线程、batch size 1、固定访问数的 PUCT/FPU；
-- 自博弈根节点可加 Dirichlet 噪声，访问次数归一化后作为 policy 标签；
-- 暂不恢复线程池、虚拟损失、推理拼批、动态预算、旧 SQLite replay 或 CoreLoop；
-- 搜索只依赖 `GameState` 与 `PositionEvaluator`，不引用 Learner。
-
-一次搜索的身份为：
-
-```text
-(base_model_version, fast_state_version, feature_schema, rules)
-```
-
-身份任一部分变化就清空树和评价缓存。冻结 publication 且没有快权重变化时，可以把实际落子
-对应的合法子节点提升为新根；快权重每步写入时默认不复用树或缓存。
+- OpenSpiel 每次 `step` 从新根开始；首版不维护跨着复杂树复用，也不恢复旧 Python MCTS。
+- 一次搜索内 publication、特征 schema、规则与快状态身份固定。
+- Python 自定义游戏和逐局 batch 1 仅适合 tiny 垂直切片；扩大采集前实现多棋局并发、统一
+  evaluator 队列和 GPU 聚批。
+- publication 或未来快权重版本变化时，任何 evaluator cache 都必须隔离或丢弃。
 
 ## 验收边界
 
-首版至少覆盖完整 tiny 棋局、非法着屏蔽、两次 pass/手数上限、固定种子复现、publication
-版本失配和异常不产生半份数据。未来 MCTS 另测价值符号、访问分布、根噪声以及树复用失效。
+首版测试至少覆盖：完整 tiny 棋局、非法着屏蔽、两次 pass/手数上限、价值视角、根噪声、
+访问分布、固定种子、版本失配、异常不产生半份分片，以及 moves 无损重建全部状态和终局。
+
+搜索适配细节见 [OpenSpiel MCTS](../integrations/mcts-compatibility.md)，物理数据设计见
+[序列化训练数据](../architecture/trajectory-storage.md)。

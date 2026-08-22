@@ -1,9 +1,8 @@
 # Zero-TTT
 
 Zero-TTT 是一个仅在 Docker 中维护的 19×19 围棋学生模型训练研究项目。项目保留
-Transformer、通用训练器、EMA、checkpoint 和本地棋规。已接受的目标架构由本项目运行
-学生纯策略自博弈，并在未来可选本地 MCTS；未修改的官方 KataGo 只作为 Human-SL/强搜索
-教师和独立 GTP 引擎。
+Transformer、通用训练器、EMA、checkpoint 和本地 Tromp–Taylor 棋规；目标训练路线是
+“监督冷启动 → OpenSpiel MCTS 自博弈 AlphaZero → 疑惑局面挑选 → 分级 KataGo 教师辅导”。
 
 ## 当前可用
 
@@ -11,10 +10,11 @@ Transformer、通用训练器、EMA、checkpoint 和本地棋规。已接受的�
 - Tromp–Taylor 棋规、特征编码、模型损失和通用 `BatchSource` 训练接口。
 - 合成数据驱动的模型/训练冒烟测试。
 - 固定到 v1.17.2 的 KataGo CUDA 镜像、Analysis Engine 与 GTP 服务入口。
+- 固定到 v2.0.1 指定提交的 OpenSpiel 源码子模块，作为未来 Python PUCT/MCTS 依赖基线。
 
-尚未实现：目标 `Learner` 包、持久样本、棋谱导入、学生自博弈、分级教师、在线蒸馏、
-局域网教师、本地 MCTS 和快权重。不会修改 KataGo 来加载或搜索 Zero-TTT checkpoint；
-路线图中的“目标/未来”不代表现有功能。
+尚未实现：目标 `Learner` 包、trajectory/annotation 持久层、棋谱导入、OpenSpiel 状态适配器、
+MCTS 自博弈、分级教师、在线蒸馏、局域网教师和快权重。OpenSpiel 目前不进入运行时镜像，
+KataGo 也不会加载 Zero-TTT checkpoint；路线图中的“目标/未来”不代表现有功能。
 
 ## 初始化与验证
 
@@ -43,10 +43,10 @@ Analysis/GTP 需要用户自行把权重放入 `models/katago/`。参见
 
 - [文档索引](docs/README.md)
 - [目标架构](docs/architecture/overview.md)
+- [统一训练生命周期](docs/workflows/training-lifecycle.md)
+- [序列化训练数据](docs/architecture/trajectory-storage.md)
+- [OpenSpiel MCTS 边界](docs/integrations/mcts-compatibility.md)
 - [Learner 与流程边界](docs/architecture/learner-and-workflows.md)
-- [离线模仿](docs/workflows/offline-imitation.md)
-- [在线蒸馏](docs/workflows/online-distillation.md)
-- [学生自博弈](docs/workflows/student-selfplay.md)
 - [Human-SL 分级教师](docs/workflows/curriculum-teachers.md)
 - [快权重研究](docs/research/fast-weights/overview.md)
 - [论文索引](paper/README.md)

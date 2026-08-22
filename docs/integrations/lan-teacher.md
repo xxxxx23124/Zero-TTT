@@ -1,7 +1,8 @@
 # 局域网教师协议草案
 
-状态：仅文档。训练机未来维护持久任务队列，装有官方强模型的教师机主动领取任务；训练机
-不依赖教师机的固定地址，也不把任务仅保存在内存。
+状态：仅文档。训练机未来维护 SQLite 持久任务队列；装有官方模型的 2070 Super 12 GiB
+笔记本教师机主动领取任务，未来可再加入 3060 台式机。能力差异通过 worker capability 与
+实际预算记录，不假设两台机器吞吐相同。
 
 ## TeacherTask
 
@@ -10,8 +11,7 @@
   "schema_version": 1,
   "task_id": "uuid",
   "game_id": "content-hash",
-  "position_index": 120,
-  "board_size": 19,
+  "ply": 120,
   "rules": "tromp-taylor",
   "komi": 7.5,
   "initial_stones": [],
@@ -22,26 +22,27 @@
 }
 ```
 
-任务必须能独立重建局面。任务 ID 用于幂等提交；棋局内容哈希防止同一 ID 被不同内容复用。
+任务必须能独立重建局面。task ID 用于幂等提交；game ID 与 ply 必须命中已登记 trajectory。
 
 ## TeacherFingerprint 与结果
 
 结果至少记录：
 
-- KataGo 版本、模型文件 SHA-256、配置 SHA-256 和后端；
+- KataGo 版本、模型文件 SHA-256、配置 SHA-256、后端和 worker capability；
 - Human-SL 模型指纹、profile 及 human policy 搜索参数（适用时）；
-- task ID、完成时间、实际 visits 和搜索终止原因；
-- SIDETOMOVE 视角的 policy 分布、value、score lead；
-- ownership 可选，缺失时显式标记；
-- 原始响应的内容哈希，便于审计和重新解析。
+- task ID、完成时间、实际 visits、终止原因和原始响应哈希；
+- SIDETOMOVE 视角的 policy、value、score，以及可选 ownership 的 mask。
+
+验证后结果写不可变 annotation shard，并以 `(game_id, ply, teacher_fingerprint)` 连接基础
+trajectory。教师升级产生新指纹并共存，不覆盖旧标签。
 
 ## 队列语义
 
-- 状态为 `pending → leased → completed`，失败可回到 `pending`。
-- worker 领取带期限租约并周期续租；崩溃后任务可被另一 worker 重领。
-- 相同 task ID 的重复结果只有完全同指纹、同内容时才幂等接受。
-- 教师模型或配置变化产生新指纹，不覆盖旧结果。
-- profile、搜索预算或 human policy 参数变化同样产生不同任务身份。
-- 超时、非法局面、OOM 和协议错误分别记录，达到重试上限后进入人工检查状态。
+- SQLite 只保存任务、租约、结果索引、分片路径与校验，不保存大型训练数组。
+- 状态为 `pending → leased → completed`；worker 周期续租，崩溃后任务可重领。
+- 相同 task ID 只有同指纹、同内容时才幂等接受；否则进入人工检查。
+- 超时、非法局面、OOM 和协议错误分别记录，达到重试上限后停止自动重试。
+- 教师机主动拉取，不共享数据库文件，也不要求固定教师地址。
 
-身份认证、传输加密、数据库、HTTP API、worker 和监控均延后实现。
+身份认证、传输加密、HTTP API、worker 和监控均延后实现。选点比例与去重规则见
+[主动选点](../workflows/online-distillation.md)。

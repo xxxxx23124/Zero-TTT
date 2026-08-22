@@ -16,6 +16,7 @@ YYYY-MM-DD-short-topic.md
 
 | 日期 | 主题 | 结果摘要 | 相关决策 |
 | --- | --- | --- | --- |
+| 2026-08-22 | [OpenSpiel、AlphaZero 与序列数据路线](2026-08-22-openspiel-trajectory-lifecycle.md) | 固定 OpenSpiel v2.0.1；默认改为 MCTS AlphaZero；接受整盘序列、NPZ 分片和可选评级 | D-036 至 D-038 |
 | 2026-08-22 | [Learner、自博弈与分级教师文档重构](2026-08-22-learner-selfplay-curriculum.md) | 接受 Learner/采集分离、本地纯策略自博弈、可选 MCTS 与 Human-SL 课程边界；只改文档 | D-032 至 D-035 |
 | 2026-08-20 | [转向 KataGo 教师与解耦训练](2026-08-20-katago-transition.md) | 删除内部 MCTS，训练改用公共契约，KataGo/Docker 与新路线完成骨架 | D-027 至 D-031 |
 | 2026-08-19 | [正式模型扩至 625M](2026-08-19-625m-model-scale-up.md) | 32×1280×3328 默认模型 625.36M；正式累积峰值 14.246 GiB | D-026 |

@@ -1,36 +1,41 @@
-# 本地 MCTS 兼容性
+# OpenSpiel MCTS 边界
 
-状态：已接受的未来方向，当前没有搜索源码。学生最近的自博弈实现仍是单线程、batch size 1
-的纯策略版本；MCTS 不阻塞该里程碑。
+状态：OpenSpiel 源码已固定，运行时 adapter 尚未实现。项目采用 v2.0.1 的 Python
+[`MCTSBot`](https://github.com/google-deepmind/open_spiel/blob/v2.0.1/open_spiel/python/algorithms/mcts.py)
+与自定义 Evaluator，不采用 OpenSpiel 内置模型、Learner 或完整 AlphaZero runner。
 
-## 边界
+源码位于 `third_party/open_spiel`，固定提交
+`112b77704631fc2ce7ad8e4581f6ca09798ce15a`。子模块用于版本审计和未来集成，本轮不把它
+加入 Docker 运行时安装步骤。
 
-KataGo 只搜索其官方网络，项目不修改 KataGo 或导出 Transformer 供其加载。未来的学生搜索
-由 Zero-TTT 本地实现，通过统一 `PositionEvaluator` 读取 policy/value，继续复用本地
-`GameState` 的规则、历史和合法着。
+## 状态与 evaluator 适配
 
-提交 `e2b3017` 中曾实现 Python PUCT、推理队列、缓存、动态预算和 CoreLoop。未来只把旧代码
-与测试当作行为参考，先选择性重写单线程、batch size 1、固定访问数的 PUCT/FPU、根噪声与
-访问次数 policy 标签；不直接恢复旧 replay/CoreLoop，也不在首版恢复并发设施。
+- 本地 `GameState` 继续唯一维护合法着、完整历史、终局与 Tromp–Taylor 计分。
+- 薄 `pyspiel.Game/State` 只转发 clone、apply_action、legal_actions、current_player、returns
+  和终局查询，不重新实现棋规。
+- 自定义 Evaluator 用 `PositionEvaluator` 取得合法着 logits 和当前行棋方 value；logits 只在
+  合法动作上 softmax 为 prior，value 转为 OpenSpiel 需要的双方数组。
+- 动作空间固定为 361 个交叉点加 pass；坐标转换只有一个受测实现。
 
-## 搜索身份
+不使用 OpenSpiel 内置 Go 状态，因为其多子自杀和 superko 行为与当前契约不一致。相关实现
+见上游 [`go.cc`](https://github.com/google-deepmind/open_spiel/blob/v2.0.1/open_spiel/games/go/go.cc)。
 
-一次搜索由以下不可变元组标识：
+## 搜索默认值
 
-```text
-(base_model_version, fast_state_version, feature_schema, rules)
-```
+- AlphaZero 自博弈初始 64 simulations，并标定至最多约 100。
+- 根加入 Dirichlet 噪声；子节点访问数归一化后成为 policy 标签。
+- publication、特征 schema、规则、搜索配置和未来快状态版本组成 evaluator 身份。
+- value/score 的存储视角明确；OpenSpiel 备份使用双方 value，不依赖隐式符号猜测。
 
-- 从根节点开始到搜索结束，基础权重和快权重都冻结。
-- evaluator 不能在进行中的搜索里热切换 publication。
-- 推理缓存和树节点必须包含完整身份；任一部分变化就作废。
-- positional superko 依赖完整局面历史，缓存键不能只有棋盘哈希。
-- value 和 score 保持当前行棋方视角，备份算法负责逐层翻转 value。
+上游 `MCTSBot.step` 每次都创建新根，`restart_at` 也是空操作，因此默认每着清树，不维护
+动态清空 API 或复杂树复用。publication/快状态变化时，外部 evaluator cache 仍须按完整
+身份隔离。
 
-## 树复用
+## 性能约束
 
-冻结 publication 且没有快权重变化时，可以研究把实际合法落子的子节点提升为新根。启用
-逐步写入的快权重后，每次真实落子都会改变 evaluator，默认丢弃旧树和网络评价缓存。除非
-以后证明状态迁移语义正确，否则不能跨快权重版本复用。
+Python 自定义游戏适合先做 tiny 垂直切片，但逐局 batch 1 会浪费 GPU。扩大采集前必须实现
+多个棋局并发推进与统一 evaluator 聚批；这属于项目 adapter/采集器，不是重新实现 MCTS。
+上游自定义游戏示例也提示 Python 游戏执行 MCTS 会较慢，见
+[`tic_tac_toe.py`](https://github.com/google-deepmind/open_spiel/blob/v2.0.1/open_spiel/python/games/tic_tac_toe.py)。
 
-详细采集顺序和验收见[学生自博弈](../workflows/student-selfplay.md)。
+提交 `e2b3017` 的旧 PUCT 仅保留为测试行为参考，不恢复其搜索、CoreLoop 或 replay 代码。

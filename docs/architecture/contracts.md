@@ -1,7 +1,7 @@
 # 公共契约
 
-代码接口位于 `zero_ttt.data` 和 `zero_ttt.inference`。它们是当前骨架，不代表真实数据工作流、
-持久样本格式或目标 `zero_ttt.learner` 已完成。
+代码接口位于 `zero_ttt.data` 和 `zero_ttt.inference`。它们是当前骨架，不代表目标 `Learner`、
+持久 schema、OpenSpiel adapter 或教师服务已经实现。本轮不改变 Python 公共 API。
 
 ## TrainBatch
 
@@ -12,26 +12,30 @@
 | `board` | `B×25×19×19` | 当前行棋方特征 |
 | `global_features` | `B×5` | 贴目、手数和行棋方 |
 | `legal` | `B×362` | Tromp–Taylor 合法着 |
-| `policy` | `B×362` | 合法着上的归一化教师分布 |
+| `policy` | `B×362` | 合法着上的归一化目标分布 |
 | `value` | `B` | 当前行棋方结果 |
 | `ownership` | `B×361` | 可选归属标签 |
 | `score_margin` | `B` | 可选目差标签 |
 | `*_mask` | `B` | 辅助标签是否有效 |
 
-`BatchSource` 只承诺 `next_batch`。离线棋谱、在线教师和学生自博弈将分别通过持久分片实现该
-协议。分片 manifest 必须保留来源、规则、publication/教师指纹、搜索预算、标签视角和 mask；
-具体持久 schema 在实现前另行版本化，本轮不把草案字段固化成 Python 公共类型。
+policy 来源可以是人类实战落子、学生 MCTS 访问分布或教师搜索分布；必须通过来源与 mask
+区分，学生 raw policy 不作为自身的改进标签。
 
 ## PositionEvaluator
 
-`InferenceBatch` 接收同一特征张量与合法着掩码；`InferenceOutput` 返回 policy logits、value，
+`InferenceBatch` 接收相同特征张量与合法着掩码；`InferenceOutput` 返回 policy logits、value，
 并可返回 ownership/score。实现必须暴露不可混淆的 `model_version`。
 
-纯策略调用者直接按运行 manifest 的选着规则使用 policy。本地 MCTS 可读取 policy/value
-扩展节点，因此不需要改变模型结构。一次搜索中的完整 evaluator 身份必须保持不变。
+未来 OpenSpiel Evaluator 将合法着 logits 归一化为 prior，并把“当前行棋方”value 转成双方
+value 数组。一次搜索内 publication、特征 schema、规则和未来快状态版本必须冻结。
 
-## 教师数据
+## 未来持久逻辑契约
 
-局域网任务和结果暂时只有[文档协议](../integrations/lan-teacher.md)，本轮没有 Python 类型、
-数据库表或网络 API。KataGo adapter 负责坐标、JSON 和视角转换，再写持久分片；Learner
-永远不接触原始协议。
+以下名称锁定语义，不在本轮新增 Python 类型：
+
+- `TrajectoryRecord`：一盘完整、有序、可从初始状态和 moves 确定性重放的棋局。
+- `AnnotationRecord`：以 `(game_id, ply, teacher_fingerprint)` 连接的可追加教师标签。
+- `RatingSnapshot`：可选、评级池相关、带误差或 RD 的 agent 评测结果。
+
+物理格式、必备身份和淘汰规则见[序列化训练数据](trajectory-storage.md)。局域网任务与结果仍
+只有[文档协议](../integrations/lan-teacher.md)；Learner 永远不接触 KataGo 原始 JSON。
