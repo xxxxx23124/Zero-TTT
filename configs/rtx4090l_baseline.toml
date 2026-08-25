@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 run_name = "rtx4090l-625m-baseline"
 seed = 20260818
 
@@ -15,8 +15,6 @@ d_model = 1280
 n_heads = 20
 n_layers = 32
 d_ff = 3328
-activation_checkpoint = true
-checkpoint_every = 1
 
 [model.rope]
 base = 100.0
@@ -31,8 +29,6 @@ num_layers = 16
 rank = 8
 hidden_dim = 128
 context_gradient_scale = 0.1
-lr_multiplier = 0.1
-grad_clip = 0.1
 
 [model.depth_mixing]
 enabled = false
@@ -58,9 +54,17 @@ ema_update_interval = 16
 publish_interval = 256
 checkpoint_keep = 2
 
+[training.hypernet]
+learning_rate_multiplier = 0.1
+gradient_clip = 0.1
+
+[execution]
+activation_checkpoint = true
+activation_checkpoint_stride = 1
+compile_model = true
+compile_mode = "default"
+
 [runtime]
 run_dir = "runs/rtx4090l-625m-baseline"
 device = "cuda"
 ema_device = "cpu"
-compile_model = true
-compile_mode = "default"

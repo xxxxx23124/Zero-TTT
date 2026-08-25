@@ -9,13 +9,13 @@ from typing import Any, Iterable
 
 import numpy as np
 import torch
-from torch import nn
 
 from zero_ttt.config import ExperimentConfig
 from zero_ttt.data.contracts import BatchSource, TrainBatch
-from zero_ttt.model.transformer import PolicyValueTransformer
+from zero_ttt.model import BasePolicyValueModel, PolicyValueTransformer
 from zero_ttt.training.checkpoint import CheckpointManager, checkpoint_metadata
 from zero_ttt.training.ema import update_slow_weights
+from zero_ttt.training.gradients import NonFiniteGradientError, clip_model_gradients
 from zero_ttt.training.losses import TrainingTargets, compute_losses
 
 
@@ -36,8 +36,8 @@ class StepMetrics:
     value_loss: float
     ownership_loss: float
     score_loss: float
-    gradient_norm: float
-    hyper_gradient_norm: float | None
+    base_gradient_norm: float
+    hypernet_gradient_norm: float | None
     hyper_a_saturation: float
     hyper_b_saturation: float
     hyper_dynamic_rms: float
@@ -62,45 +62,51 @@ class Trainer:
         self,
         config: ExperimentConfig,
         checkpoint_manager: CheckpointManager,
-        fast_model: PolicyValueTransformer | None = None,
-        slow_model: PolicyValueTransformer | None = None,
+        fast_model: BasePolicyValueModel | None = None,
+        slow_model: BasePolicyValueModel | None = None,
     ) -> None:
         self.config = config
         self.device = torch.device(config.runtime.device)
         self.ema_device = torch.device(config.runtime.ema_device)
-        self.fast = (fast_model or PolicyValueTransformer(config.model)).to(self.device)
-        self.slow = (slow_model or PolicyValueTransformer(config.model)).to(
+        self.fast = (
+            fast_model or PolicyValueTransformer(config.model, config.execution)
+        ).to(self.device)
+        self.slow = (
+            slow_model or PolicyValueTransformer(config.model, config.execution)
+        ).to(
             self.ema_device,
             dtype=torch.float32,
         )
         self.slow.load_state_dict(self.fast.state_dict())
         self.slow.eval().requires_grad_(False)
+        self.fast.configure_execution(config.execution)
+        self.slow.configure_execution(config.execution)
         self.state = TrainerState()
         self.checkpoints = checkpoint_manager
-        self._hyper_ids = {id(parameter) for parameter in self.fast.hypernet_parameters()}
+        self._parameter_groups = self.fast.parameter_groups()
         self.optimizer = self._build_optimizer()
-        if config.runtime.compile_model:
-            self.fast.compile_training_blocks(
+        if config.execution.compile_model:
+            self.fast.compile_training_components(
                 dynamic=False,
-                mode=config.runtime.compile_mode,
+                mode=config.execution.compile_mode,
             )
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
-        groups: dict[tuple[bool, bool], list[nn.Parameter]] = {}
-        for name, parameter in self.fast.named_parameters():
-            is_hyper = id(parameter) in self._hyper_ids
-            decay = parameter.ndim >= 2 and "norm" not in name and name != "cls_token"
-            groups.setdefault((is_hyper, decay), []).append(parameter)
         optimizer_groups: list[dict[str, Any]] = []
-        for (is_hyper, decay), parameters in groups.items():
-            optimizer_groups.append(
-                {
-                    "params": parameters,
-                    "weight_decay": self.config.training.weight_decay if decay else 0.0,
-                    "lr": 0.0,
-                    "group_name": "hypernet" if is_hyper else "base",
-                }
-            )
+        for group in self._parameter_groups:
+            for parameters, weight_decay in (
+                (group.decay, self.config.training.weight_decay),
+                (group.no_decay, 0.0),
+            ):
+                if parameters:
+                    optimizer_groups.append(
+                        {
+                            "params": parameters,
+                            "weight_decay": weight_decay,
+                            "lr": 0.0,
+                            "group_name": group.name,
+                        }
+                    )
         return torch.optim.AdamW(
             optimizer_groups,
             lr=0.0,
@@ -117,10 +123,10 @@ class Trainer:
 
     def _set_schedule(self, step: int) -> float:
         learning_rate = self._base_lr(step)
-        hyper = self.config.model.hypernet
+        hyper = self.config.training.hypernet
         for group in self.optimizer.param_groups:
             if group["group_name"] == "hypernet":
-                group["lr"] = learning_rate * hyper.lr_multiplier
+                group["lr"] = learning_rate * hyper.learning_rate_multiplier
             else:
                 group["lr"] = learning_rate
         return learning_rate
@@ -201,36 +207,24 @@ class Trainer:
                         losses.value.item(),
                         losses.ownership.item(),
                         losses.score.item(),
-                        output.hyper_a_saturation.item(),
-                        output.hyper_b_saturation.item(),
-                        output.hyper_dynamic_rms.item(),
-                        output.hyper_static_rms.item(),
+                        output.diagnostics.hyper_a_saturation.item(),
+                        output.diagnostics.hyper_b_saturation.item(),
+                        output.diagnostics.hyper_dynamic_rms.item(),
+                        output.diagnostics.hyper_static_rms.item(),
                     ]
                 )
         except BaseException:
             self.optimizer.zero_grad(set_to_none=True)
             raise
 
-        hyper_parameters = [
-            parameter
-            for parameter in self.fast.parameters()
-            if id(parameter) in self._hyper_ids and parameter.grad is not None
-        ]
-        hyper_norm_value: float | None = None
-        if hyper_parameters:
-            hyper_norm = torch.nn.utils.clip_grad_norm_(
-                hyper_parameters,
-                self.config.model.hypernet.grad_clip,
+        try:
+            gradient_norms = clip_model_gradients(
+                self._parameter_groups,
+                base_max_norm=self.config.training.gradient_clip,
+                hypernet_max_norm=self.config.training.hypernet.gradient_clip,
             )
-            if not torch.isfinite(hyper_norm):
-                self._fault("non-finite hypernetwork gradient")
-            hyper_norm_value = float(hyper_norm)
-        gradient_norm = torch.nn.utils.clip_grad_norm_(
-            self.fast.parameters(),
-            self.config.training.gradient_clip,
-        )
-        if not torch.isfinite(gradient_norm):
-            self._fault("non-finite model gradient")
+        except NonFiniteGradientError as error:
+            self._fault(str(error))
         self.optimizer.step()
         if not parameters_are_finite(self.fast.parameters()):
             self._fault("non-finite model parameter after optimizer step")
@@ -259,8 +253,8 @@ class Trainer:
             value_loss=float(totals[2]),
             ownership_loss=float(totals[3]),
             score_loss=float(totals[4]),
-            gradient_norm=float(gradient_norm),
-            hyper_gradient_norm=hyper_norm_value,
+            base_gradient_norm=gradient_norms.base,
+            hypernet_gradient_norm=gradient_norms.hypernet,
             hyper_a_saturation=float(totals[5]),
             hyper_b_saturation=float(totals[6]),
             hyper_dynamic_rms=float(totals[7]),

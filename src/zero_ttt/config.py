@@ -37,8 +37,6 @@ class HypernetConfig:
     rank: int
     hidden_dim: int
     context_gradient_scale: float
-    lr_multiplier: float
-    grad_clip: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,11 +54,15 @@ class ModelConfig:
     n_heads: int
     n_layers: int
     d_ff: int
-    activation_checkpoint: bool
-    checkpoint_every: int
     rope: RoPEConfig
     hypernet: HypernetConfig
     depth_mixing: DepthMixingConfig
+
+
+@dataclass(frozen=True, slots=True)
+class HypernetTrainingConfig:
+    learning_rate_multiplier: float
+    gradient_clip: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +84,15 @@ class TrainingConfig:
     ema_update_interval: int
     publish_interval: int
     checkpoint_keep: int
+    hypernet: HypernetTrainingConfig
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionConfig:
+    activation_checkpoint: bool
+    activation_checkpoint_stride: int
+    compile_model: bool
+    compile_mode: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,8 +100,6 @@ class RuntimeConfig:
     run_dir: str
     device: str
     ema_device: str
-    compile_model: bool
-    compile_mode: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +110,7 @@ class ExperimentConfig:
     game: GameConfig
     model: ModelConfig
     training: TrainingConfig
+    execution: ExecutionConfig
     runtime: RuntimeConfig
 
     def canonical_json(self) -> str:
@@ -175,7 +185,7 @@ def _construct_dataclass(cls: type[T], data: dict[str, Any], path: str) -> T:
 
 
 def validate_config(config: ExperimentConfig) -> None:
-    if config.schema_version != 3:
+    if config.schema_version != 4:
         raise ValueError(f"unsupported schema_version={config.schema_version}")
     if config.game.board_size != 19:
         raise ValueError("only 19x19 is supported")
@@ -196,8 +206,6 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("rope.rotary_dim must be positive, <= head_dim, and divisible by 4")
     if rope.base <= 1.0 or rope.scale <= 0.0:
         raise ValueError("RoPE base must be >1 and scale must be positive")
-    if model.checkpoint_every <= 0:
-        raise ValueError("model.checkpoint_every must be positive")
     hyper = model.hypernet
     if not (0 <= hyper.num_layers <= model.n_layers):
         raise ValueError("hypernet.num_layers must be within model depth")
@@ -205,8 +213,6 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("hypernet rank and hidden_dim must be positive")
     for name, value in (
         ("context_gradient_scale", hyper.context_gradient_scale),
-        ("lr_multiplier", hyper.lr_multiplier),
-        ("grad_clip", hyper.grad_clip),
     ):
         if value < 0:
             raise ValueError(f"hypernet.{name} must be non-negative")
@@ -230,8 +236,17 @@ def validate_config(config: ExperimentConfig) -> None:
     )
     if any(value <= 0 for value in positive_train):
         raise ValueError("training sizes, rates, intervals, and limits must be positive")
+    if train.hypernet.learning_rate_multiplier < 0:
+        raise ValueError("training.hypernet.learning_rate_multiplier must be non-negative")
+    if train.hypernet.gradient_clip <= 0:
+        raise ValueError("training.hypernet.gradient_clip must be positive")
     if not (0 < train.beta1 < 1 and 0 < train.beta2 < 1):
         raise ValueError("AdamW beta values must be in (0, 1)")
+    execution = config.execution
+    if execution.activation_checkpoint_stride <= 0:
+        raise ValueError("execution.activation_checkpoint_stride must be positive")
+    if not execution.compile_mode:
+        raise ValueError("execution.compile_mode cannot be empty")
     if config.runtime.device not in {"cpu", "cuda"}:
         raise ValueError("runtime.device must be 'cpu' or 'cuda'")
     if config.runtime.ema_device not in {"cpu", "cuda"}:

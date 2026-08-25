@@ -12,7 +12,7 @@ from typing import Any
 import torch
 
 
-CHECKPOINT_SCHEMA_VERSION = 3
+CHECKPOINT_SCHEMA_VERSION = 4
 
 
 class CheckpointManager:

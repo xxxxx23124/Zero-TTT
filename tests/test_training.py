@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 from torch import nn
 
 from zero_ttt.config import load_config
 from zero_ttt.data.synthetic import SyntheticBatchSource
-from zero_ttt.model.transformer import PolicyValueTransformer
+from zero_ttt.model import PolicyValueTransformer
 from zero_ttt.training.checkpoint import CheckpointManager
 from zero_ttt.training.ema import ema_decay, update_slow_weights
+from zero_ttt.training.gradients import clip_model_gradients
 from zero_ttt.training.trainer import Trainer, parameters_are_finite
 
 
@@ -50,6 +52,54 @@ def test_ema_synchronizes_named_buffers() -> None:
     assert torch.equal(slow.num_batches_tracked, fast.num_batches_tracked)
 
 
+def test_fp32_ema_retains_updates_smaller_than_bfloat16_resolution() -> None:
+    fast = nn.Linear(1, 1, bias=False).float()
+    slow = nn.Linear(1, 1, bias=False).float()
+    with torch.no_grad():
+        slow.weight.fill_(1.0)
+        fast.weight.fill_(1.001)
+    update_slow_weights(slow, fast, samples=1, half_life_samples=1)
+    assert slow.weight.dtype == torch.float32
+    assert 1.0 < slow.weight.item() < fast.weight.item()
+    assert torch.tensor(slow.weight.item(), dtype=torch.bfloat16).item() == 1.0
+
+
+def test_parameter_groups_are_complete_disjoint_and_clipped_once() -> None:
+    config = load_config("configs/test.toml")
+    model = PolicyValueTransformer(config.model, config.execution)
+    groups = model.parameter_groups()
+    assert {group.name for group in groups} == {"base", "hypernet"}
+    grouped_ids = [id(parameter) for group in groups for parameter in group.parameters]
+    trainable_ids = [id(parameter) for parameter in model.parameters() if parameter.requires_grad]
+    assert len(grouped_ids) == len(set(grouped_ids))
+    assert set(grouped_ids) == set(trainable_ids)
+    base = next(group for group in groups if group.name == "base")
+    assert any(
+        parameter is model.encoder.summary_token for parameter in base.no_decay
+    )
+
+    for parameter in model.parameters():
+        parameter.grad = torch.ones_like(parameter)
+    norms = clip_model_gradients(
+        groups,
+        base_max_norm=0.5,
+        hypernet_max_norm=0.25,
+    )
+    assert norms.base > 0.5
+    assert norms.hypernet is not None and norms.hypernet > 0.25
+    for group, limit in ((base, 0.5), (next(g for g in groups if g.name == "hypernet"), 0.25)):
+        post_clip = torch.linalg.vector_norm(
+            torch.stack(
+                [
+                    torch.linalg.vector_norm(parameter.grad)
+                    for parameter in group.parameters
+                    if parameter.grad is not None
+                ]
+            )
+        )
+        assert post_clip <= limit + 1e-5
+
+
 def test_hypernetwork_trains_from_first_step_at_reduced_learning_rate(tmp_path) -> None:
     config = load_config("configs/test.toml")
     trainer = Trainer(config, CheckpointManager(tmp_path, keep=2))
@@ -58,10 +108,12 @@ def test_hypernetwork_trains_from_first_step_at_reduced_learning_rate(tmp_path) 
         group["lr"] for group in trainer.optimizer.param_groups if group["group_name"] == "hypernet"
     ]
     assert hyper_lrs and set(hyper_lrs) == {
-        learning_rate * config.model.hypernet.lr_multiplier
+        learning_rate * config.training.hypernet.learning_rate_multiplier
     }
-    assert trainer.slow.cls_token.device.type == "cpu"
-    assert trainer.slow.cls_token.dtype == torch.float32
+    assert trainer.fast.encoder.summary_token.dtype == torch.float32
+    assert all(parameter.dtype == torch.float32 for parameter in trainer.fast.parameters())
+    assert trainer.slow.encoder.summary_token.device.type == "cpu"
+    assert trainer.slow.encoder.summary_token.dtype == torch.float32
 
 
 def test_one_optimizer_step_ema_publish_and_restore(tmp_path) -> None:
@@ -71,18 +123,22 @@ def test_one_optimizer_step_ema_publish_and_restore(tmp_path) -> None:
     manager = CheckpointManager(run_dir, keep=config.training.checkpoint_keep)
     source = SyntheticBatchSource()
     rng = np.random.default_rng(8)
-    trainer = Trainer(config, manager, PolicyValueTransformer(config.model))
+    trainer = Trainer(
+        config,
+        manager,
+        PolicyValueTransformer(config.model, config.execution),
+    )
     metrics = trainer.train_optimizer_step(source, rng)
     assert metrics.step == 1
     assert np.isfinite(metrics.total_loss)
-    assert metrics.hyper_gradient_norm is not None
+    assert metrics.hypernet_gradient_norm is not None
     assert metrics.ema_update_seconds is not None
     assert trainer.state.samples_seen == (
         config.training.batch_size * config.training.accumulation_steps
     )
     checkpoint = trainer.save_checkpoint(rng)
     publication = trainer.publish()
-    assert trainer.slow.cls_token.device.type == "cpu"
+    assert trainer.slow.encoder.summary_token.device.type == "cpu"
     saved_parameter = next(trainer.fast.parameters()).detach().clone()
     with torch.no_grad():
         next(trainer.fast.parameters()).add_(2.0)
@@ -94,3 +150,10 @@ def test_one_optimizer_step_ema_publish_and_restore(tmp_path) -> None:
         tensor for tensor in published["slow_state"].values() if tensor.is_floating_point()
     )
     assert floating.dtype == torch.bfloat16
+
+
+def test_legacy_checkpoint_schema_is_rejected(tmp_path) -> None:
+    path = tmp_path / "legacy.pt"
+    torch.save({"checkpoint_schema_version": 3}, path)
+    with pytest.raises(ValueError, match="unsupported checkpoint schema"):
+        CheckpointManager.load(path)

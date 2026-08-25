@@ -8,7 +8,7 @@ import torch
 from torch.nn import functional as F
 
 from zero_ttt.config import TrainingConfig
-from zero_ttt.model.transformer import ModelOutput
+from zero_ttt.model import ModelOutput
 
 
 @dataclass(frozen=True, slots=True)

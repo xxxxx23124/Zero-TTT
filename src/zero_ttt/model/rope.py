@@ -6,15 +6,25 @@ import torch
 from torch import nn
 
 from zero_ttt.config import RoPEConfig
+from zero_ttt.model.tokens import TokenLayout
 
 
 class AxialRoPE2D(nn.Module):
     """Apply independent row and column rotations, leaving CLS unrotated."""
 
-    def __init__(self, config: RoPEConfig, head_dim: int, board_size: int = 19) -> None:
+    def __init__(
+        self,
+        config: RoPEConfig,
+        head_dim: int,
+        layout: TokenLayout,
+        board_size: int = 19,
+    ) -> None:
         super().__init__()
         if config.rotary_dim > head_dim or config.rotary_dim % 4:
             raise ValueError("rotary_dim must fit the head and be divisible by four")
+        if layout.board_tokens != board_size * board_size:
+            raise ValueError("token layout does not match the RoPE board size")
+        self.layout = layout
         self.rotary_dim = config.rotary_dim
         self.axis_dim = config.rotary_dim // 2
         self.scale = config.scale
@@ -30,9 +40,8 @@ class AxialRoPE2D(nn.Module):
             coordinates = torch.arange(board_size, dtype=torch.float32)
         rows = coordinates[:, None].expand(board_size, board_size).reshape(-1)
         cols = coordinates[None, :].expand(board_size, board_size).reshape(-1)
-        # The final entry is CLS. Zero coordinates make its rotation the identity.
-        self.register_buffer("row_positions", torch.cat((rows, torch.zeros(1))), persistent=True)
-        self.register_buffer("col_positions", torch.cat((cols, torch.zeros(1))), persistent=True)
+        self.register_buffer("row_positions", rows, persistent=True)
+        self.register_buffer("col_positions", cols, persistent=True)
 
     @staticmethod
     def _rotate_axis(values: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
@@ -47,21 +56,24 @@ class AxialRoPE2D(nn.Module):
         return angles.cos().to(dtype=dtype)[None, None], angles.sin().to(dtype=dtype)[None, None]
 
     def apply(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Rotate a [batch, heads, 362, head_dim] Q or K tensor."""
+        """Rotate board positions and leave every special token unchanged."""
 
-        if tensor.shape[-2] != self.row_positions.numel():
-            raise ValueError("RoPE token count does not match the 19x19 board plus CLS")
+        self.layout.validate(tensor)
+        board = self.layout.board(tensor)
+        special = self.layout.special(tensor)
         row_cos, row_sin = self._trig(self.row_positions, tensor.dtype)
         col_cos, col_sin = self._trig(self.col_positions, tensor.dtype)
-        row = self._rotate_axis(tensor[..., : self.axis_dim], row_cos, row_sin)
+        row = self._rotate_axis(board[..., : self.axis_dim], row_cos, row_sin)
         col = self._rotate_axis(
-            tensor[..., self.axis_dim : self.rotary_dim],
+            board[..., self.axis_dim : self.rotary_dim],
             col_cos,
             col_sin,
         )
-        if self.rotary_dim == tensor.shape[-1]:
-            return torch.cat((row, col), dim=-1)
-        return torch.cat((row, col, tensor[..., self.rotary_dim :]), dim=-1)
+        if self.rotary_dim == board.shape[-1]:
+            rotated_board = torch.cat((row, col), dim=-1)
+        else:
+            rotated_board = torch.cat((row, col, board[..., self.rotary_dim :]), dim=-1)
+        return torch.cat((rotated_board, special), dim=-2)
 
     def forward(self, query: torch.Tensor, key: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         return self.apply(query), self.apply(key)

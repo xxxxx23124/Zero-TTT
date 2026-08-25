@@ -6,9 +6,27 @@ import torch
 from torch import nn
 
 from zero_ttt.config import DepthMixingConfig
+from zero_ttt.model.interfaces import DepthMixer
 
 
-class SparseDepthWeightedAverage(nn.Module):
+class IdentityDepthMixer(DepthMixer):
+    """Explicit disabled implementation."""
+
+    def should_retain(self, depth: int) -> bool:
+        del depth
+        return False
+
+    def forward(
+        self,
+        depth: int,
+        raw_states: dict[int, torch.Tensor],
+        current: torch.Tensor,
+    ) -> torch.Tensor:
+        del depth, raw_states
+        return current
+
+
+class SparseDepthWeightedAverage(DepthMixer):
     """Mix raw block outputs at configured depths with identity initialization."""
 
     def __init__(self, n_layers: int, config: DepthMixingConfig) -> None:

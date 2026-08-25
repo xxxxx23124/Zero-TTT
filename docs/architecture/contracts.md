@@ -1,7 +1,8 @@
 # 公共契约
 
-代码接口位于 `zero_ttt.data` 和 `zero_ttt.inference`。它们是当前骨架，不代表目标 `Learner`、
-持久 schema、OpenSpiel adapter 或教师服务已经实现。本轮不改变 Python 公共 API。
+数据与推理接口位于 `zero_ttt.data` 和 `zero_ttt.inference`；模型的稳定导入面位于
+`zero_ttt.model`。它们是当前骨架，不代表目标 `Learner`、持久 schema、OpenSpiel adapter
+或教师服务已经实现。
 
 ## TrainBatch
 

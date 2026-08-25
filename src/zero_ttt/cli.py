@@ -12,7 +12,7 @@ import torch
 from zero_ttt.config import load_config
 from zero_ttt.data.synthetic import SyntheticBatchSource
 from zero_ttt.game.rules import ACTION_SIZE, BOARD_SIZE
-from zero_ttt.model.transformer import PolicyValueTransformer
+from zero_ttt.model import PolicyValueTransformer
 from zero_ttt.training.checkpoint import CheckpointManager
 from zero_ttt.training.trainer import Trainer
 
@@ -29,7 +29,7 @@ def _parser() -> argparse.ArgumentParser:
 def _model_smoke(config_path: str) -> None:
     config = load_config(config_path)
     device = torch.device(config.runtime.device)
-    model = PolicyValueTransformer(config.model).to(device).train()
+    model = PolicyValueTransformer(config.model, config.execution).to(device).train()
     batch = config.training.batch_size
     board = torch.zeros(batch, config.model.input_planes, BOARD_SIZE, BOARD_SIZE, device=device)
     globals_ = torch.zeros(batch, config.model.global_features, device=device)

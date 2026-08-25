@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 run_name = "test"
 seed = 7
 
@@ -15,8 +15,6 @@ d_model = 64
 n_heads = 4
 n_layers = 2
 d_ff = 128
-activation_checkpoint = false
-checkpoint_every = 2
 
 [model.rope]
 base = 100.0
@@ -31,8 +29,6 @@ num_layers = 1
 rank = 4
 hidden_dim = 16
 context_gradient_scale = 0.1
-lr_multiplier = 0.1
-grad_clip = 0.1
 
 [model.depth_mixing]
 enabled = true
@@ -58,9 +54,17 @@ ema_update_interval = 1
 publish_interval = 2
 checkpoint_keep = 2
 
+[training.hypernet]
+learning_rate_multiplier = 0.1
+gradient_clip = 0.1
+
+[execution]
+activation_checkpoint = false
+activation_checkpoint_stride = 2
+compile_model = false
+compile_mode = "default"
+
 [runtime]
 run_dir = "runs/test"
 device = "cpu"
 ema_device = "cpu"
-compile_model = false
-compile_mode = "default"

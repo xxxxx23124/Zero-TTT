@@ -11,12 +11,12 @@ import time
 from typing import Any
 
 import torch
-from torch import nn
 
 from zero_ttt.config import ExperimentConfig, load_config
 from zero_ttt.game.rules import ACTION_SIZE, BOARD_AREA, BOARD_SIZE
-from zero_ttt.model.transformer import ModelOutput, PolicyValueTransformer
+from zero_ttt.model import ModelOutput, PolicyValueTransformer
 from zero_ttt.training.ema import update_slow_weights
+from zero_ttt.training.gradients import clip_model_gradients
 from zero_ttt.training.losses import TrainingTargets, compute_losses
 from zero_ttt.training.trainer import parameters_are_finite
 
@@ -33,22 +33,21 @@ def _build_optimizer(
     model: PolicyValueTransformer,
     config: ExperimentConfig,
 ) -> torch.optim.Optimizer:
-    hyper_ids = {id(parameter) for parameter in model.hypernet_parameters()}
-    groups: dict[tuple[bool, bool], list[nn.Parameter]] = {}
-    for name, parameter in model.named_parameters():
-        is_hyper = id(parameter) in hyper_ids
-        decay = parameter.ndim >= 2 and "norm" not in name and name != "cls_token"
-        groups.setdefault((is_hyper, decay), []).append(parameter)
     optimizer_groups: list[dict[str, Any]] = []
-    for (is_hyper, decay), parameters in groups.items():
-        optimizer_groups.append(
-            {
-                "params": parameters,
-                "weight_decay": config.training.weight_decay if decay else 0.0,
-                "lr": 0.0,
-                "group_name": "hypernet" if is_hyper else "base",
-            }
-        )
+    for group in model.parameter_groups():
+        for parameters, weight_decay in (
+            (group.decay, config.training.weight_decay),
+            (group.no_decay, 0.0),
+        ):
+            if parameters:
+                optimizer_groups.append(
+                    {
+                        "params": parameters,
+                        "weight_decay": weight_decay,
+                        "lr": 0.0,
+                        "group_name": group.name,
+                    }
+                )
     return torch.optim.AdamW(
         optimizer_groups,
         lr=0.0,
@@ -70,7 +69,7 @@ def _set_learning_rate(
         learning_rate = config.training.learning_rate * math.sqrt(warmup / step)
     for group in optimizer.param_groups:
         multiplier = (
-            config.model.hypernet.lr_multiplier
+            config.training.hypernet.learning_rate_multiplier
             if group["group_name"] == "hypernet"
             else 1.0
         )
@@ -111,37 +110,21 @@ def _clip_gradients(
     model: PolicyValueTransformer,
     config: ExperimentConfig,
 ) -> tuple[float, float | None]:
-    hyper_ids = {id(parameter) for parameter in model.hypernet_parameters()}
-    hyper_parameters = [
-        parameter
-        for parameter in model.parameters()
-        if id(parameter) in hyper_ids and parameter.grad is not None
-    ]
-    hyper_norm_value: float | None = None
-    if hyper_parameters:
-        hyper_norm = torch.nn.utils.clip_grad_norm_(
-            hyper_parameters,
-            config.model.hypernet.grad_clip,
-        )
-        if not torch.isfinite(hyper_norm):
-            raise FloatingPointError("production smoke hypernetwork gradient is non-finite")
-        hyper_norm_value = float(hyper_norm)
-    gradient_norm = torch.nn.utils.clip_grad_norm_(
-        model.parameters(),
-        config.training.gradient_clip,
+    norms = clip_model_gradients(
+        model.parameter_groups(),
+        base_max_norm=config.training.gradient_clip,
+        hypernet_max_norm=config.training.hypernet.gradient_clip,
     )
-    if not torch.isfinite(gradient_norm):
-        raise FloatingPointError("production smoke gradient is non-finite")
-    return float(gradient_norm), hyper_norm_value
+    return norms.base, norms.hypernet
 
 
 def _branch_gradients_are_finite(model: PolicyValueTransformer) -> tuple[bool, bool]:
-    hyper_finite = model.hypernet is None or all(
+    hyper_finite = not model.config.hypernet.enabled or all(
         parameter.grad is not None
         and parameters_are_finite((parameter.grad,))
-        for parameter in model.hypernet.parameters()
+        for parameter in model.block_plugin.parameters()
     )
-    dwa_finite = model.depth_mixing is None or all(
+    dwa_finite = not model.config.depth_mixing.enabled or all(
         parameter.grad is not None
         and parameters_are_finite((parameter.grad,))
         for parameter in model.depth_mixing.parameters()
@@ -159,16 +142,22 @@ def run_case(
     if measured_optimizer_steps <= 0:
         raise ValueError("measured_optimizer_steps must be positive")
 
-    fast = PolicyValueTransformer(config.model).cuda().train()
-    slow = PolicyValueTransformer(config.model).cpu().float().eval().requires_grad_(False)
+    fast = PolicyValueTransformer(config.model, config.execution).cuda().train()
+    slow = (
+        PolicyValueTransformer(config.model, config.execution)
+        .cpu()
+        .float()
+        .eval()
+        .requires_grad_(False)
+    )
     slow.load_state_dict(fast.state_dict())
-    inference = PolicyValueTransformer(config.model)
+    inference = PolicyValueTransformer(config.model, config.execution)
     inference.load_state_dict(slow.state_dict())
     inference = inference.cuda().to(dtype=torch.bfloat16).eval().requires_grad_(False)
     optimizer = _build_optimizer(fast, config)
-    if config.runtime.compile_model:
-        fast.compile_training_blocks(dynamic=False, mode=config.runtime.compile_mode)
-        inference.compile(dynamic=False, mode=config.runtime.compile_mode)
+    if config.execution.compile_model:
+        fast.compile_training_components(dynamic=False, mode=config.execution.compile_mode)
+        inference.compile(dynamic=False, mode=config.execution.compile_mode)
 
     batch = config.training.batch_size
     accumulation = config.training.accumulation_steps
@@ -318,16 +307,16 @@ def run_case(
         "peak_allocated_gib": peak_allocated / 1024**3,
         "peak_reserved_gib": peak_reserved / 1024**3,
         "loss": loss.detach().item(),
-        "gradient_norm": statistics.median(gradient_norms),
-        "hyper_gradient_norm": (
+        "base_gradient_norm": statistics.median(gradient_norms),
+        "hypernet_gradient_norm": (
             statistics.median(hyper_gradient_norms) if hyper_gradient_norms else None
         ),
         "hyper_gradients_finite": hyper_gradients_finite,
         "dwa_gradients_finite": dwa_gradients_finite,
-        "hyper_a_saturation": output.hyper_a_saturation.item(),
-        "hyper_b_saturation": output.hyper_b_saturation.item(),
-        "hyper_dynamic_rms": output.hyper_dynamic_rms.item(),
-        "hyper_static_rms": output.hyper_static_rms.item(),
+        "hyper_a_saturation": output.diagnostics.hyper_a_saturation.item(),
+        "hyper_b_saturation": output.diagnostics.hyper_b_saturation.item(),
+        "hyper_dynamic_rms": output.diagnostics.hyper_dynamic_rms.item(),
+        "hyper_static_rms": output.diagnostics.hyper_static_rms.item(),
     }
     del output, loss, publication_output, compile_loss, optimizer, inference, slow, fast
     del board, global_features, legal, targets

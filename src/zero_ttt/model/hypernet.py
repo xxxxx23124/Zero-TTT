@@ -8,6 +8,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from zero_ttt.model.components import initialize_linear
+from zero_ttt.model.interfaces import BlockResidualOutput, BlockResidualPlugin
 from zero_ttt.model.norm import StableRMSNorm
 
 
@@ -16,7 +18,9 @@ def scale_gradient(tensor: torch.Tensor, scale: float) -> torch.Tensor:
     return detached + scale * (tensor - detached)
 
 
-class SharedDynamicLowRank(nn.Module):
+class SharedDynamicLowRank(BlockResidualPlugin):
+    optimization_group = "hypernet"
+
     def __init__(
         self,
         d_model: int,
@@ -36,15 +40,19 @@ class SharedDynamicLowRank(nn.Module):
         self.layer_embedding = nn.Embedding(n_layers, hidden_dim)
         self.a_head = nn.Linear(hidden_dim, d_model * rank)
         self.b_head = nn.Linear(hidden_dim, rank * d_ff)
+        initialize_linear(self.context_projection)
+        nn.init.normal_(self.layer_embedding.weight, mean=0.0, std=0.02)
+        initialize_linear(self.a_head)
         nn.init.zeros_(self.b_head.weight)
         nn.init.zeros_(self.b_head.bias)
 
     def forward(
         self,
         hidden: torch.Tensor,
+        static_output: torch.Tensor,
         context: torch.Tensor,
         layer_selector: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> BlockResidualOutput:
         """Return a dynamic residual and raw A/B saturation fractions."""
 
         batch = hidden.shape[0]
@@ -63,4 +71,12 @@ class SharedDynamicLowRank(nn.Module):
         with torch.no_grad():
             a_saturation = (raw_a.abs() >= 0.95).float().mean()
             b_saturation = (raw_b.abs() >= 0.95).float().mean()
-        return dynamic, a_saturation, b_saturation
+            dynamic_rms = dynamic.float().square().mean().sqrt()
+            static_rms = static_output.float().square().mean().sqrt()
+        return BlockResidualOutput(
+            dynamic,
+            a_saturation,
+            b_saturation,
+            dynamic_rms,
+            static_rms,
+        )
