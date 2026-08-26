@@ -17,7 +17,7 @@
 
 ## 实验与结果
 
-文档修改前的 Docker 基线通过 `scripts/check_docs.py` 与 `tests/test_docs.py`。修改后再次执行
+文档修改前的 Docker 基线通过 `scripts/check_docs.py` 与 `tests/quality/test_docs.py`。修改后再次执行
 相同检查；没有重跑 GPU 冒烟。显存边界引用既有 625M 正式验收的 14.246 GiB 结果。
 
 ## 产生的决策

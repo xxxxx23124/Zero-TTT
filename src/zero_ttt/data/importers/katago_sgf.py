@@ -18,7 +18,7 @@ from zero_ttt.data.records import (
     TrajectoryRecord,
     stable_game_id,
 )
-from zero_ttt.game.rules import BOARD_AREA, BOARD_SIZE, PASS_ACTION, Color
+from zero_ttt.game.rules import BOARD_AREA, BOARD_SIZE, PASS_ACTION
 from zero_ttt.game.state import GameState
 
 

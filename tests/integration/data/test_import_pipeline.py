@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+import hashlib
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from zero_ttt.data.catalog import Catalog
+from zero_ttt.data.importers import KataGoSgfImporter
+from zero_ttt.data.manifest import ManifestAsset
+from zero_ttt.data.pipeline import import_manifest
+from zero_ttt.data.shards import ShardStore
+
+
+def test_katago_importer_streams_records_and_structured_rejections(
+    tmp_path: Path,
+    valid_sgf,
+    manifest_factory,
+) -> None:
+    archive_path = tmp_path / "source.zip"
+    unsupported_size = valid_sgf.replace(b"SZ[19]", b"SZ[13]")
+    cross_rules = valid_sgf.replace(
+        b"koPOSITIONALscoreAREAtaxNONEsui1",
+        b"koSIMPLEscoreAREAtaxNONEsui0",
+    )
+    cleanup = valid_sgf[:-1] + b";B[cc])"
+    illegal = valid_sgf.replace(b";W[bb]", b";W[aa]")
+    setup = valid_sgf.replace(b"HA[0]", b"HA[0]AB[cc]")
+    fork = valid_sgf.replace(b"mode=normal", b"mode=fork")
+    variation = valid_sgf.replace(b";W[bb]", b"(;W[bb])(;W[cc])")
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            "net/sgfs/games.sgfs",
+            b"\n".join(
+                (
+                    valid_sgf,
+                    cross_rules,
+                    unsupported_size,
+                    cleanup,
+                    illegal,
+                    setup,
+                    fork,
+                    variation,
+                )
+            ),
+        )
+    payload = archive_path.read_bytes()
+    asset = ManifestAsset("source.zip", hashlib.sha256(payload).hexdigest(), len(payload))
+    manifest = manifest_factory(asset)
+
+    events = list(KataGoSgfImporter().import_asset(manifest, asset, tmp_path))
+    records = [event.record for event in events if event.kind == "trajectory"]
+    reasons = [event.reason_code for event in events if event.kind == "reject"]
+    assert len(records) == 2
+    assert records[0] is not None and records[0].trainable_start_ply == 1
+    assert records[0].trainable_position_count == 3
+    assert records[0].value_available
+    assert records[1] is not None and not records[1].value_available
+    assert set(reasons) == {
+        "board_size",
+        "cleanup_phase",
+        "illegal_move",
+        "setup_stones",
+        "mode",
+        "variation",
+    }
+
+    altered = ManifestAsset("source.zip", "0" * 64, len(payload))
+    with pytest.raises(ValueError, match="integrity"):
+        list(
+            KataGoSgfImporter().import_asset(
+                manifest_factory(altered),
+                altered,
+                tmp_path,
+            )
+        )
+
+
+def test_malformed_typed_sgf_properties_are_rejected_without_stopping(
+    tmp_path: Path,
+    valid_sgf,
+    manifest_factory,
+) -> None:
+    archive_path = tmp_path / "source.zip"
+    malformed = (
+        valid_sgf.replace(b"HA[0]", b"HA[x]"),
+        valid_sgf.replace(b"KM[0]", b"KM[x]"),
+        valid_sgf.replace(b"SZ[19]", b"SZ[x]"),
+        valid_sgf.replace(b";B[aa]", b";B[zz]"),
+        valid_sgf.replace(b"RE[0]", b"RE[B+nonsense]"),
+    )
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("games.sgfs", b"\n".join((*malformed, valid_sgf)))
+    payload = archive_path.read_bytes()
+    asset = ManifestAsset("source.zip", hashlib.sha256(payload).hexdigest(), len(payload))
+    events = list(
+        KataGoSgfImporter().import_asset(manifest_factory(asset), asset, tmp_path)
+    )
+    assert [event.kind for event in events] == ["reject"] * len(malformed) + [
+        "trajectory"
+    ]
+    assert all(
+        event.reason_code in {"invalid_sgf", "invalid_move", "unsupported_result"}
+        for event in events[:-1]
+    )
+
+
+def test_capped_import_counts_only_new_games_and_finishes_only_at_eof(
+    tmp_path: Path,
+    valid_sgf,
+    manifest_factory,
+) -> None:
+    archive_path = tmp_path / "source.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("games.sgfs", b"\n".join((valid_sgf,) * 3))
+    payload = archive_path.read_bytes()
+    asset = ManifestAsset("source.zip", hashlib.sha256(payload).hexdigest(), len(payload))
+    manifest_path = tmp_path / "manifest.json"
+    manifest_factory(asset).save(manifest_path)
+    store_root = tmp_path / "processed"
+    catalog_path = tmp_path / "catalog.sqlite"
+
+    statuses = []
+    for _ in range(3):
+        summary = import_manifest(
+            manifest_path,
+            tmp_path,
+            store_root,
+            catalog_path,
+            max_accepted=1,
+            target_shard_bytes=1024,
+        )
+        assert summary.accepted == 1
+        with Catalog(catalog_path, ShardStore(store_root)) as catalog:
+            statuses.append(catalog.asset_status(asset.sha256))
+    assert statuses == ["partial", "partial", "imported"]
+    with Catalog(catalog_path, ShardStore(store_root)) as catalog:
+        snapshot_id = catalog.create_snapshot(seed=1, validation_fraction=0.0)
+        assert len(catalog.snapshot_trajectories(snapshot_id)) == 3

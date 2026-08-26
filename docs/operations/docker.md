@@ -9,6 +9,9 @@ Container Toolkit；不维护宿主机 Python、PyTorch、CUDA 或编译器兼�
 git submodule update --init --recursive
 docker compose build dev
 docker compose run --rm dev python -m pytest -q
+docker compose run --rm dev python -m pytest -q tests/unit
+docker compose run --rm dev python -m pytest -q tests/integration
+docker compose run --rm dev python -m pytest -q tests/quality
 docker compose run --rm dev python scripts/check_docs.py
 docker compose run --rm dev zero-ttt config-check --config configs/test.toml
 docker compose run --rm dev zero-ttt model-smoke --config configs/test.toml

@@ -24,6 +24,8 @@ KataGo 也不会加载 Zero-TTT checkpoint；路线图中的“目标/未来”�
 git submodule update --init --recursive
 docker compose build dev
 docker compose run --rm dev python -m pytest -q
+docker compose run --rm dev python -m pytest -q tests/unit
+docker compose run --rm dev python -m pytest -q tests/integration
 docker compose run --rm dev python scripts/check_docs.py
 docker compose run --rm dev zero-ttt config-check --config configs/test.toml
 docker compose run --rm dev zero-ttt train-smoke --config configs/test.toml

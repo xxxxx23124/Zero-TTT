@@ -29,7 +29,7 @@ GPU 聚批或自博弈采集器已经实现。
 ## 验证结果
 
 - `python scripts/check_docs.py` 通过全部 Markdown 大小与本地链接检查。
-- `python -m pytest tests/test_docs.py -q`：`1 passed`；宿主机因沙箱无法写 `.pytest_cache`
+- `python -m pytest tests/quality/test_docs.py -q`：`1 passed`；宿主机因沙箱无法写 `.pytest_cache`
   产生一个非测试失败 warning。
 - `git diff --check` 通过；全局冲突扫描只命中历史 devlog/已标记被取代的决策和明确的消融说明。
 - 子模块 HEAD、gitlink 与 tag 分别核对为指定完整提交和 `v2.0.1`。
