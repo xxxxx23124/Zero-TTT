@@ -151,6 +151,7 @@ def test_losses_remain_finite_with_masked_logits() -> None:
         value=torch.zeros(2),
         ownership=torch.zeros(2, 361),
         score_margin=torch.zeros(2),
+        value_mask=torch.ones(2),
         ownership_mask=torch.ones(2),
         score_mask=torch.ones(2),
     )

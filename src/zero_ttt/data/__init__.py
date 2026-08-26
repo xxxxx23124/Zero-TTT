@@ -1,6 +1,23 @@
-"""Training-data contracts and small development sources."""
+"""Versioned training-data contracts, storage, and batch sources."""
 
+from zero_ttt.data.catalog import Catalog
+from zero_ttt.data.catalog_source import CatalogBatchSource
 from zero_ttt.data.contracts import BatchSource, TrainBatch
+from zero_ttt.data.manifest import ManifestAsset, SourceManifest
+from zero_ttt.data.records import AnnotationRecord, ImportEvent, TrajectoryRecord
+from zero_ttt.data.shards import ShardStore
 from zero_ttt.data.synthetic import SyntheticBatchSource
 
-__all__ = ["BatchSource", "SyntheticBatchSource", "TrainBatch"]
+__all__ = [
+    "AnnotationRecord",
+    "BatchSource",
+    "Catalog",
+    "CatalogBatchSource",
+    "ImportEvent",
+    "ManifestAsset",
+    "ShardStore",
+    "SourceManifest",
+    "SyntheticBatchSource",
+    "TrainBatch",
+    "TrajectoryRecord",
+]

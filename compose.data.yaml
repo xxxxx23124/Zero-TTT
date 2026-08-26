@@ -1,0 +1,11 @@
+services:
+  dev:
+    volumes:
+      - type: bind
+        source: ${ZERO_TTT_DATASET_ROOT:?set ZERO_TTT_DATASET_ROOT to the external dataset directory}
+        target: /datasets/zero-ttt
+        read_only: true
+      - zero-ttt-data-work:/datasets/work
+
+volumes:
+  zero-ttt-data-work:

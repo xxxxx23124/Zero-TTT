@@ -37,21 +37,21 @@ period = 4
 
 [training]
 batch_size = 16
-accumulation_steps = 16
-learning_rate = 0.0002
+accumulation_steps = 256
+learning_rate = 0.0001
 beta1 = 0.9
-beta2 = 0.95
+beta2 = 0.98
 eps = 1e-8
-weight_decay = 0.1
-warmup_steps = 2000
+weight_decay = 0.03
+warmup_samples = 512000
 gradient_clip = 1.0
 policy_loss_weight = 1.0
 value_loss_weight = 1.0
 ownership_loss_weight = 0.15
 score_loss_weight = 0.05
 ema_half_life_samples = 1048576
-ema_update_interval = 16
-publish_interval = 256
+ema_update_interval_samples = 4096
+publish_interval_samples = 65536
 checkpoint_keep = 2
 
 [training.hypernet]

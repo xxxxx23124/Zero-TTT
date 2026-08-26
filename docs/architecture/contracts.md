@@ -1,8 +1,7 @@
 # 公共契约
 
 数据与推理接口位于 `zero_ttt.data` 和 `zero_ttt.inference`；模型的稳定导入面位于
-`zero_ttt.model`。它们是当前骨架，不代表目标 `Learner`、持久 schema、OpenSpiel adapter
-或教师服务已经实现。
+`zero_ttt.model`。Learner 与首版持久 schema 已实现；OpenSpiel adapter 和教师服务仍未实现。
 
 ## TrainBatch
 
@@ -17,7 +16,9 @@
 | `value` | `B` | 当前行棋方结果 |
 | `ownership` | `B×361` | 可选归属标签 |
 | `score_margin` | `B` | 可选目差标签 |
-| `*_mask` | `B` | 辅助标签是否有效 |
+| `value_mask` | `B` | value 是否有效 |
+| `ownership_mask` | `B` | ownership 是否有效 |
+| `score_mask` | `B` | score margin 是否有效 |
 
 policy 来源可以是人类实战落子、学生 MCTS 访问分布或教师搜索分布；必须通过来源与 mask
 区分，学生 raw policy 不作为自身的改进标签。
@@ -30,11 +31,12 @@ policy 来源可以是人类实战落子、学生 MCTS 访问分布或教师搜�
 未来 OpenSpiel Evaluator 将合法着 logits 归一化为 prior，并把“当前行棋方”value 转成双方
 value 数组。一次搜索内 publication、特征 schema、规则和未来快状态版本必须冻结。
 
-## 未来持久逻辑契约
+## 持久逻辑契约
 
-以下名称锁定语义，不在本轮新增 Python 类型：
+以下名称已作为版本化 Python 类型实现：
 
-- `TrajectoryRecord`：一盘完整、有序、可从初始状态和 moves 确定性重放的棋局。
+- `TrajectoryRecord`：一盘完整、有序、从空棋盘和 moves 确定性重放的棋局；v2 明确不接受
+  setup/handicap/initial-position，且持久化本局 `max_moves`。
 - `AnnotationRecord`：以 `(game_id, ply, teacher_fingerprint)` 连接的可追加教师标签。
 - `RatingSnapshot`：可选、评级池相关、带误差或 RD 的 agent 评测结果。
 

@@ -21,19 +21,17 @@ forward 钩子。
 
 - `model` 定义纯前向、子模块初始化、token layout、插件插入点和完整互斥的参数分组；
 - `ExecutionConfig` 与 block executor 决定 activation checkpoint 和 compile，不改变模型数学；
-- Trainer 决定学习率、weight decay、分组梯度裁剪、FP32 EMA 和优化器生命周期；
+- Learner 决定学习率、weight decay、分组梯度裁剪、FP32 EMA 和优化器生命周期；
 - checkpoint manager 只负责原子保存、保留策略和 publication 文件。
 
-## 当前训练器与目标 Learner
+## 当前 Learner
 
-Trainer 只通过 `BatchSource.next_batch(batch_size, rng)` 取样。每个 `TrainBatch` 都已经完成
-规则解释、视角转换、合法着处理和标签归一化，Trainer 不负责解析原始数据。
-
-目标架构把这些能力迁入 `zero_ttt.learner.Learner`，但不扩大职责。Learner 独占训练模型、
+`zero_ttt.learner.Learner` 只通过 `BatchSource.next_batch(batch_size, rng)` 取样。每个
+`TrainBatch` 都已经完成规则解释、视角转换、合法着处理和标签归一化。Learner 独占训练模型、
 优化器、CPU FP32 EMA、训练 compile、梯度生命周期、checkpoint 和 publication；它不解析
 SGF/KataGo JSON，不运行游戏、MCTS、教师队列或课程调度。
 
-缺失的 ownership/score 由逐样本布尔 mask 表示，不能伪造为有效零标签。policy 必须是合法着
+缺失的 value/ownership/score 由逐样本布尔 mask 表示，不能伪造为有效零标签。policy 必须是合法着
 上的非负归一化分布，value 与辅助标签均使用当前行棋方视角。
 
 GPU `fast` 参数、梯度缓冲和 AdamW 状态保持 FP32，BF16 只用于 autocast 下的矩阵计算；CPU
@@ -41,9 +39,10 @@ FP32 `slow` 按样本数做 EMA。FP32 slow 能保留小于 BF16 权重分辨率
 BF16 前后向已经舍入的信息。小学习率负责在线吸收新标签，EMA 负责发布和评估稳定性，两者
 不是互相替代的训练策略。
 
-推理由另一个只读 `PositionEvaluator` 加载 BF16 slow publication。正式显存冒烟已经在训练
-batch 16、累积 16 时同时驻留 fast、CPU EMA 和 GPU publication，峰值为 14.246 GiB；因此
-目标默认同进程常驻、训练与采集分阶段运行，不预先实现复杂的模型/优化器换入换出。
+生产配置保留 microbatch 16，并累积 256 次形成有效 batch 4096；AdamW 使用
+`lr=1e-4`、`betas=(0.9,0.98)`、`weight_decay=0.03`。warmup、EMA 和 publication 触发均按
+`samples_seen` 定义，调整累积步数不会改变样本时间尺度。现有 14.246 GiB 数据来自旧的
+microbatch 16 显存冒烟，只证明单个 microbatch 的驻留上限，不代表已经跑过完整 4096 batch。
 
 ## 复现边界
 

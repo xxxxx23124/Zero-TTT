@@ -26,6 +26,7 @@ class TrainBatch:
     value: np.ndarray
     ownership: np.ndarray
     score_margin: np.ndarray
+    value_mask: np.ndarray
     ownership_mask: np.ndarray
     score_mask: np.ndarray
 
@@ -41,6 +42,7 @@ class TrainBatch:
             "value": ((batch,), np.float32),
             "ownership": ((batch, BOARD_AREA), np.float32),
             "score_margin": ((batch,), np.float32),
+            "value_mask": ((batch,), np.bool_),
             "ownership_mask": ((batch,), np.bool_),
             "score_mask": ((batch,), np.bool_),
         }

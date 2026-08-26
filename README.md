@@ -8,12 +8,14 @@ Transformer、通用训练器、EMA、checkpoint 和本地 Tromp–Taylor 棋规
 
 - 625M 与全关闭基线的策略—价值 Transformer 配置。
 - Tromp–Taylor 棋规、特征编码、模型损失和通用 `BatchSource` 训练接口。
-- 合成数据驱动的模型/训练冒烟测试。
+- g170 SGF Importer、版本化 trajectory/annotation NPZ、SQLite catalog 与快照采样。
+- `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v4 checkpoint 和不可变 publication。
+- 合成数据与 64 盘真实 g170 棋谱驱动的 Docker 垂直冒烟测试。
 - 固定到 v1.17.2 的 KataGo CUDA 镜像、Analysis Engine 与 GTP 服务入口。
 - 固定到 v2.0.1 指定提交的 OpenSpiel 源码子模块，作为未来 Python PUCT/MCTS 依赖基线。
 
-尚未实现：目标 `Learner` 包、trajectory/annotation 持久层、棋谱导入、OpenSpiel 状态适配器、
-MCTS 自博弈、分级教师、在线蒸馏、局域网教师和快权重。OpenSpiel 目前不进入运行时镜像，
+尚未实现：OpenSpiel 状态适配器、MCTS 自博弈、KataGo rich-NPZ 连接、分级教师、在线蒸馏、
+局域网教师和快权重。OpenSpiel 目前不进入运行时镜像，
 KataGo 也不会加载 Zero-TTT checkpoint；路线图中的“目标/未来”不代表现有功能。
 
 ## 初始化与验证
@@ -26,6 +28,9 @@ docker compose run --rm dev python scripts/check_docs.py
 docker compose run --rm dev zero-ttt config-check --config configs/test.toml
 docker compose run --rm dev zero-ttt train-smoke --config configs/test.toml
 ```
+
+真实数据冒烟通过 `compose.data.yaml` 将外部目录只读挂载；命令见
+[Docker 运维](docs/operations/docker.md)。
 
 项目不保证宿主机 Python、CUDA 或编译器环境可用。所有正式命令均以 Compose 服务为入口。
 

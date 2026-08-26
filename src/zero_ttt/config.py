@@ -74,17 +74,23 @@ class TrainingConfig:
     beta2: float
     eps: float
     weight_decay: float
-    warmup_steps: int
+    warmup_samples: int
     gradient_clip: float
     policy_loss_weight: float
     value_loss_weight: float
     ownership_loss_weight: float
     score_loss_weight: float
     ema_half_life_samples: int
-    ema_update_interval: int
-    publish_interval: int
+    ema_update_interval_samples: int
+    publish_interval_samples: int
     checkpoint_keep: int
     hypernet: HypernetTrainingConfig
+
+    @property
+    def effective_batch_size(self) -> int:
+        """Training positions consumed by one optimizer update."""
+
+        return self.batch_size * self.accumulation_steps
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +190,39 @@ def _construct_dataclass(cls: type[T], data: dict[str, Any], path: str) -> T:
     return cls(**kwargs)
 
 
+def _normalize_training_schedule(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalize legacy optimizer-step intervals at the configuration boundary."""
+
+    normalized = dict(raw)
+    training = normalized.get("training")
+    if not isinstance(training, dict):
+        return normalized
+    training = dict(training)
+    batch_size = training.get("batch_size")
+    accumulation = training.get("accumulation_steps")
+    if not isinstance(batch_size, int) or not isinstance(accumulation, int):
+        normalized["training"] = training
+        return normalized
+    effective_batch = batch_size * accumulation
+    aliases = (
+        ("warmup_steps", "warmup_samples"),
+        ("ema_update_interval", "ema_update_interval_samples"),
+        ("publish_interval", "publish_interval_samples"),
+    )
+    for legacy, canonical in aliases:
+        if legacy in training and canonical in training:
+            raise ValueError(
+                f"config.training: {legacy} and {canonical} cannot both be specified"
+            )
+        if legacy in training:
+            value = training.pop(legacy)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"config.training.{legacy}: expected int")
+            training[canonical] = value * effective_batch
+    normalized["training"] = training
+    return normalized
+
+
 def validate_config(config: ExperimentConfig) -> None:
     if config.schema_version != 4:
         raise ValueError(f"unsupported schema_version={config.schema_version}")
@@ -227,15 +266,17 @@ def validate_config(config: ExperimentConfig) -> None:
         train.accumulation_steps,
         train.learning_rate,
         train.eps,
-        train.warmup_steps,
+        train.warmup_samples,
         train.gradient_clip,
         train.ema_half_life_samples,
-        train.ema_update_interval,
-        train.publish_interval,
+        train.ema_update_interval_samples,
+        train.publish_interval_samples,
         train.checkpoint_keep,
     )
     if any(value <= 0 for value in positive_train):
         raise ValueError("training sizes, rates, intervals, and limits must be positive")
+    if train.weight_decay < 0:
+        raise ValueError("training.weight_decay must be non-negative")
     if train.hypernet.learning_rate_multiplier < 0:
         raise ValueError("training.hypernet.learning_rate_multiplier must be non-negative")
     if train.hypernet.gradient_clip <= 0:
@@ -257,6 +298,17 @@ def load_config(path: str | Path) -> ExperimentConfig:
     config_path = Path(path)
     with config_path.open("rb") as handle:
         raw = tomllib.load(handle)
-    config = _construct_dataclass(ExperimentConfig, raw, "config")
+    config = config_from_mapping(raw)
+    return config
+
+
+def config_from_mapping(raw: dict[str, Any]) -> ExperimentConfig:
+    """Build a strict config after converting supported legacy schedule keys."""
+
+    config = _construct_dataclass(
+        ExperimentConfig,
+        _normalize_training_schedule(raw),
+        "config",
+    )
     validate_config(config)
     return config

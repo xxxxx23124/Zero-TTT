@@ -9,17 +9,25 @@
 - KataGo v1.17.2 保持教师/GTP；OpenSpiel v2.0.1 指定提交作为学生 MCTS 源码基线。
 - 接受统一训练生命周期、序列优先 NPZ 分片和可选棋力评级设计。
 
-## 下一阶段一：序列数据垂直切片
+## 已完成：2026-08 离线数据垂直切片
 
-- 版本化 `TrajectoryRecord`/annotation NPZ 数组 schema 与 SQLite 索引。
-- 实现原子分片、SHA-256、半写恢复、`game_offsets` 和完整棋局淘汰。
-- 从 moves 重建全部状态；测试连续子序列、burn-in、统一 D4 与 pinned 数据。
+- g170 SGF manifest/import、版本化 trajectory/annotation NPZ 和 SQLite catalog。
+- 内容寻址的不可变 snapshot、均匀 position 边际的 shard-local 采样、D4、标签 mask 与
+  `CatalogBatchSource`。
+- 单一 `Learner`、样本尺度 warmup/EMA/publication、有效 batch 4096 生产配置和数据身份恢复检查。
+- Docker 合成闭环与首个 g170 归档 64 盘真实 smoke。
 
-## 下一阶段二：冷启动与 Learner
+## 下一阶段一：序列数据扩展
 
-- 将训练生命周期整理为小型 `Learner` 门面，`model` 保持纯网络定义。
-- 导入许可清晰的整盘棋谱，生成监督 `BatchSource`，按棋局切分验证。
-- 实现只读 BF16 publication evaluator，并保持 14.5 GiB 双模型驻留验收线。
+- benchmark 全量随机读取、LRU 命中和 shard 大小，增加 compaction 与窗口监控。
+- 实现连续子序列、burn-in 和整段统一 D4。
+- 仅在获得可靠连接键后接入 KataGo rich NPZ；再评估 Leela 混合采样。
+
+## 下一阶段二：扩大监督冷启动
+
+- 执行全量 manifest/import，冻结正式 train/validation snapshot 并记录吞吐。
+- 在 RTX 4090 上验证累积 256、有效 batch 4096 的长时稳定性与恢复。
+- 实现只读 BF16 publication evaluator，并重新确认双模型驻留验收线。
 
 ## 下一阶段三：OpenSpiel AlphaZero
 

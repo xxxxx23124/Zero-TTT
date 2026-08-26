@@ -45,6 +45,7 @@ def test_train_batch_rejects_policy_on_illegal_action() -> None:
             value=batch.value,
             ownership=batch.ownership,
             score_margin=batch.score_margin,
+            value_mask=batch.value_mask,
             ownership_mask=batch.ownership_mask,
             score_mask=batch.score_mask,
         )

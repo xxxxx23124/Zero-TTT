@@ -33,6 +33,7 @@ class SyntheticBatchSource:
             value=np.zeros(batch_size, dtype=np.float32),
             ownership=np.zeros((batch_size, BOARD_AREA), dtype=np.float32),
             score_margin=np.zeros(batch_size, dtype=np.float32),
+            value_mask=np.ones(batch_size, dtype=np.bool_),
             ownership_mask=np.ones(batch_size, dtype=np.bool_),
             score_mask=np.ones(batch_size, dtype=np.bool_),
         )

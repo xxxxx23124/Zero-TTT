@@ -15,6 +15,50 @@ docker compose run --rm dev zero-ttt model-smoke --config configs/test.toml
 docker compose run --rm dev zero-ttt train-smoke --config configs/test.toml
 ```
 
+真实 g170 垂直冒烟只读挂载外部数据目录：
+
+```powershell
+$env:ZERO_TTT_DATASET_ROOT = 'D:\datasets\Zero-TTT'
+docker compose -f compose.yaml -f compose.data.yaml run --rm dev `
+  python scripts/data_smoke_test.py
+```
+
+该脚本只处理首个归档中稳定顺序的 64 个合格棋局；catalog、shard、checkpoint 和 publication
+都写入容器临时目录。全量导入应使用同一挂载配合 `zero-ttt manifest-create` 与
+`zero-ttt data-import`，并显式把输出目录挂载到可写卷。
+
+完整 g170 导入与快照命令如下；这些命令只读 `/datasets/zero-ttt/raw`，输出写入
+`/datasets/work` 命名卷：
+
+```powershell
+docker compose -f compose.yaml -f compose.data.yaml run --rm dev zero-ttt manifest-create `
+  --dataset-id katago-g170 --source-type katago-g170-sgfs-zip `
+  --license-id CC0-1.0 --license-url https://katagoarchive.org/g170/LICENSE.txt `
+  --source-root /datasets/zero-ttt --glob 'raw/katago/g170/selfplay/*.zip' `
+  --output /datasets/work/manifests/g170.json
+
+docker compose -f compose.yaml -f compose.data.yaml run --rm dev zero-ttt manifest-check `
+  --manifest /datasets/work/manifests/g170.json --source-root /datasets/zero-ttt
+
+docker compose -f compose.yaml -f compose.data.yaml run --rm dev zero-ttt data-import `
+  --manifest /datasets/work/manifests/g170.json --source-root /datasets/zero-ttt `
+  --store-root /datasets/work/processed --catalog /datasets/work/catalog/catalog.sqlite
+
+docker compose -f compose.yaml -f compose.data.yaml run --rm dev zero-ttt data-verify `
+  --store-root /datasets/work/processed --catalog /datasets/work/catalog/catalog.sqlite
+
+docker compose -f compose.yaml -f compose.data.yaml run --rm dev zero-ttt snapshot-create `
+  --store-root /datasets/work/processed --catalog /datasets/work/catalog/catalog.sqlite `
+  --seed 7 --split train --validation-fraction 0.1
+```
+
+`snapshot-create` 输出不可变 snapshot ID。把该 ID 传给 `offline-imitation --snapshot`；正式运行
+前应在配置中把 `runtime.run_dir` 指向持久写入位置。本仓库不自动启动全量导入或长期训练。
+
+当前数据格式为 record/shard/catalog v2，不迁移早期 v1 本地产物。旧 catalog 或 shard 会给出
+明确的重建错误；先自行归档或删除旧输出目录，再从保留的 source manifest 重新执行 import 和
+snapshot-create。工具不会自动删除运行产物。
+
 `third_party/open_spiel` 当前只固定上游源码和许可证，尚未进入开发镜像，也没有运行时安装
 命令。加入 adapter 时必须在 Dockerfile 中显式固定构建依赖并增加最小搜索冒烟。
 

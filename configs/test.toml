@@ -43,15 +43,15 @@ beta1 = 0.9
 beta2 = 0.95
 eps = 1e-8
 weight_decay = 0.01
-warmup_steps = 2
+warmup_samples = 8
 gradient_clip = 1.0
 policy_loss_weight = 1.0
 value_loss_weight = 1.0
 ownership_loss_weight = 0.15
 score_loss_weight = 0.05
 ema_half_life_samples = 32
-ema_update_interval = 1
-publish_interval = 2
+ema_update_interval_samples = 4
+publish_interval_samples = 8
 checkpoint_keep = 2
 
 [training.hypernet]

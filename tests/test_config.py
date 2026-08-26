@@ -36,6 +36,14 @@ def test_production_and_baseline_experiment_switches() -> None:
     assert production.model.d_ff == 3328
     assert production.execution.activation_checkpoint_stride == 1
     assert production.execution.activation_checkpoint
+    assert production.training.effective_batch_size == 4096
+    assert production.training.accumulation_steps == 256
+    assert production.training.learning_rate == 1e-4
+    assert production.training.beta2 == 0.98
+    assert production.training.weight_decay == 0.03
+    assert production.training.warmup_samples == 512_000
+    assert production.training.ema_update_interval_samples == 4096
+    assert production.training.publish_interval_samples == 65_536
     assert production.model.hypernet.enabled
     assert production.model.hypernet.num_layers == 16
     assert production.model.depth_mixing.enabled

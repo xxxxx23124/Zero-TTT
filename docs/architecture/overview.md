@@ -23,17 +23,19 @@ KataGo 教师 ─→ annotation shards ─────────────�
 
 - 固定 19×19 的 Tromp–Taylor 状态、合法着、历史、数子与特征编码。
 - 策略、价值、所有权和目差输出的 Transformer。
-- 与数据来源无关的 Trainer、CPU FP32 EMA、checkpoint 和 BF16 publication；未来将演进为
-  `Learner` 门面。
-- `BatchSource`、`TrainBatch`、`PositionEvaluator` 三个稳定边界。
+- 与数据来源无关的 `Learner`、CPU FP32 EMA、checkpoint 和 BF16 publication；旧 Trainer
+  路径只是兼容导出。
+- `TrajectoryRecord`/`AnnotationRecord`、NPZ ShardStore、SQLite Catalog、不可变 snapshot 和
+  `CatalogBatchSource` 垂直切片。
+- `BatchSource`、带逐样本标签 mask 的 `TrainBatch`、`PositionEvaluator` 三个稳定边界。
 - KataGo v1.17.2 的独立 Docker 入口，以及固定版本的 OpenSpiel 源码子模块。
 
 ## 当前未实现
 
-- trajectory/annotation NPZ 分片、SQLite 索引、真实棋谱导入与滑动窗口。
+- 跨 shard compaction、KataGo rich-NPZ 连接、Leela 混合采样与自动数据窗口监控。
 - `pyspiel.Game/State` 薄适配层、OpenSpiel evaluator 和 MCTS 自博弈采集。
 - KataGo 教师 worker、局域网队列、混合采样和课程调度。
-- 目标 `learner` 包、快权重和评级系统。
+- 快权重和评级系统。
 
 ## 解耦原则
 

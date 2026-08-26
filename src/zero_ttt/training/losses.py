@@ -17,6 +17,7 @@ class TrainingTargets:
     value: torch.Tensor
     ownership: torch.Tensor
     score_margin: torch.Tensor
+    value_mask: torch.Tensor
     ownership_mask: torch.Tensor
     score_mask: torch.Tensor
 
@@ -49,7 +50,12 @@ def compute_losses(
         torch.zeros_like(log_policy),
     )
     policy = -policy_terms.sum(dim=-1).mean()
-    value = F.mse_loss(output.value.float().squeeze(-1), target.value.float())
+    value_per_sample = F.mse_loss(
+        output.value.float().squeeze(-1),
+        target.value.float(),
+        reduction="none",
+    )
+    value = _masked_mean(value_per_sample, target.value_mask)
     ownership_per_point = F.smooth_l1_loss(
         output.ownership.float(),
         target.ownership.float(),

@@ -1,21 +1,20 @@
 # Learner 与流程边界
 
-状态：已接受的目标架构，尚未实现。当前代码仍使用 `zero_ttt.training.Trainer`；未来迁移不能
-伪装成已经存在的公共 API。
+状态：首版 Learner 与离线数据垂直切片已实现；OpenSpiel、教师队列和课程调度仍未实现。
 
 ## 组件职责
 
 | 组件 | 唯一职责 |
 | --- | --- |
 | `model` | 定义纯 `nn.Module`、前向输出和可关闭的模型实验 |
-| 目标 `learner` | 监督优化、EMA、compile、梯度、checkpoint 和 publication |
+| `learner` | 监督优化、EMA、compile、梯度、checkpoint 和 publication |
 | `inference` | 从不可变 publication 构造只读 `PositionEvaluator` |
 | `data` | trajectory/annotation 校验、混合和 `BatchSource` |
 | OpenSpiel adapter | 把本地棋局和 evaluator 接到 Python MCTS |
 | 采集流程 | 棋谱导入、MCTS 自博弈、KataGo 标注和课程调度 |
 | KataGo adapter | JSON/坐标/视角与 annotation 之间的转换 |
 
-`Learner` 是小型门面，不包含游戏、搜索、网络协议或调度。目标操作沿用现有 Trainer：训练
+`Learner` 是小型门面，不包含游戏、搜索、网络协议或调度。它负责训练
 若干 step、保存、恢复和发布；输入仍只有 `BatchSource`/`TrainBatch`。采集器不得持有训练
 模型、优化器或 EMA 的 Python 引用。
 
@@ -41,7 +40,7 @@ SQLite 只承担索引、任务、租约和校验控制，不保存大型训练 
 进程中同时常驻训练模型与 evaluator，但训练和采集按阶段顺序运行，不并发提交 CUDA 工作。
 
 现有正式冒烟同时驻留 GPU FP32 fast、CPU FP32 EMA 和 GPU BF16 publication，以训练
-batch 16、累积 16 跑到峰值 `14.246 GiB reserved`。当前不增加模型换入换出；未来生命周期
+microbatch 16 跑到峰值 `14.246 GiB reserved`；生产配置把梯度累积提高到 256。当前不增加模型换入换出；未来生命周期
 改动仍须保持 14.5 GiB 验收线。
 
 ## 流程组合
