@@ -13,13 +13,13 @@ def test_load_test_config_is_stable() -> None:
     assert first == second
     assert first.sha256 == second.sha256
     assert first.model.d_model == 64
-    assert first.schema_version == 4
+    assert first.schema_version == 5
     assert first.model.hypernet.enabled
     assert first.model.depth_mixing.enabled
     assert first.runtime.ema_device == "cpu"
-    assert not hasattr(first, "search")
+    assert first.search.max_simulations == 64
     assert not hasattr(first, "replay")
-    assert not hasattr(first, "selfplay")
+    assert first.selfplay.inference_batch_size == 16
 
 
 def test_unknown_config_field_is_rejected(tmp_path: Path) -> None:

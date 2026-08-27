@@ -29,12 +29,11 @@
 - 在 RTX 4090 上验证累积 256、有效 batch 4096 的长时稳定性与恢复。
 - 实现只读 BF16 publication evaluator，并重新确认双模型驻留验收线。
 
-## 下一阶段三：OpenSpiel AlphaZero
+## 已完成：首版 OpenSpiel AlphaZero 垂直切片
 
-- 实现本地 `GameState` 的薄 `pyspiel.Game/State` 与自定义 Evaluator。
-- 以 64 simulations 完成 MCTS 自博弈 tiny 闭环，再标定至约 100。
-- 覆盖合法着、价值视角、根噪声、访问标签、终局与异常分片测试。
-- 扩大采集前实现多棋局并发和统一 GPU 推理聚批。
+- 已实现本地 `GameState` 的薄 `pyspiel.Game/State`、自定义 Evaluator 和 64 simulations PUCT。
+- 已实现 16 棋局并发、固定 batch-16 GPU 后端、可恢复 task、v3 shard 和 mixture→Learner 闭环。
+- 下一步在 RTX 4090 上记录正式 publication 的显存、batch fill、规则耗时和 simulations/s，再决定是否提高预算。
 
 ## 下一阶段四：主动教师辅导
 

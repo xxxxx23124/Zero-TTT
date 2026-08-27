@@ -13,7 +13,8 @@ import numpy as np
 from zero_ttt.game.rules import ACTION_SIZE, BOARD_AREA
 
 
-RECORD_SCHEMA_VERSION = 2
+RECORD_SCHEMA_VERSION = 3
+SUPPORTED_RECORD_SCHEMA_VERSIONS = frozenset({2, 3})
 
 
 def stable_game_id(
@@ -63,9 +64,26 @@ class TrajectoryRecord:
     score_available: bool
     ownership_black: tuple[float, ...]
     ownership_available: bool
+    source_kind: str = "external/played_move"
+    task_id: str = ""
+    termination: str = "external"
+    game_seed: int = 0
+    black_agent_id: str = ""
+    white_agent_id: str = ""
+    publication_sha256: str = ""
+    feature_schema_id: str = ""
+    search_config_sha256: str = ""
+    search_budgets: tuple[int, ...] = ()
+    root_values: tuple[float, ...] = ()
+    root_score_margins: tuple[float, ...] = ()
+    temperatures: tuple[float, ...] = ()
+    search_seeds: tuple[int, ...] = ()
+    root_noise_mask: tuple[bool, ...] = ()
+    search_metadata_mask: tuple[bool, ...] = ()
+    root_score_mask: tuple[bool, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.schema_version != RECORD_SCHEMA_VERSION:
+        if self.schema_version not in SUPPORTED_RECORD_SCHEMA_VERSIONS:
             raise ValueError("unsupported trajectory record schema")
         try:
             bytes.fromhex(self.game_id)
@@ -83,6 +101,22 @@ class TrajectoryRecord:
         if len(self.moves) > self.max_moves:
             raise ValueError("trajectory exceeds its max_moves boundary")
         positions = self.trainable_position_count
+        defaults: tuple[tuple[str, object], ...] = (
+            ("search_budgets", 0),
+            ("root_values", 0.0),
+            ("root_score_margins", 0.0),
+            ("temperatures", 0.0),
+            ("search_seeds", 0),
+            ("root_noise_mask", False),
+            ("search_metadata_mask", False),
+            ("root_score_mask", False),
+        )
+        for name, default in defaults:
+            values = getattr(self, name)
+            if not values:
+                object.__setattr__(self, name, (default,) * positions)
+            elif len(values) != positions:
+                raise ValueError(f"{name} must describe every trainable position")
         if len(self.policy_row_offsets) != positions + 1:
             raise ValueError("policy_row_offsets must describe every trainable position")
         if not self.policy_row_offsets or self.policy_row_offsets[0] != 0:
@@ -101,6 +135,19 @@ class TrajectoryRecord:
         object.__setattr__(self, "value_black", float(np.float32(self.value_black)))
         object.__setattr__(self, "score_margin_black", float(np.float32(self.score_margin_black)))
         object.__setattr__(self, "ownership_black", normalized_ownership)
+        normalized_roots = tuple(
+            float(value) for value in np.asarray(self.root_values, dtype=np.float32)
+        )
+        normalized_scores = tuple(
+            float(value)
+            for value in np.asarray(self.root_score_margins, dtype=np.float32)
+        )
+        normalized_temperatures = tuple(
+            float(value) for value in np.asarray(self.temperatures, dtype=np.float32)
+        )
+        object.__setattr__(self, "root_values", normalized_roots)
+        object.__setattr__(self, "root_score_margins", normalized_scores)
+        object.__setattr__(self, "temperatures", normalized_temperatures)
         for start, end in zip(self.policy_row_offsets, self.policy_row_offsets[1:]):
             values = normalized_policy[start:end]
             if not values or any(value < 0 or not math.isfinite(value) for value in values):
@@ -113,9 +160,46 @@ class TrajectoryRecord:
             raise ValueError("ownership_black must contain exactly 361 values")
         if not all(
             math.isfinite(value)
-            for value in (self.value_black, self.score_margin_black, *self.ownership_black)
+            for value in (
+                self.value_black,
+                self.score_margin_black,
+                *self.ownership_black,
+                *normalized_roots,
+                *normalized_scores,
+                *normalized_temperatures,
+            )
         ):
             raise ValueError("trajectory targets must be finite")
+        if self.schema_version == 2:
+            if self.source_kind != "external/played_move" or any(self.search_metadata_mask):
+                raise ValueError("v2 trajectories cannot contain v3 search metadata")
+        else:
+            if not self.source_kind or not self.termination:
+                raise ValueError("v3 trajectories require source and termination identities")
+            if not 0 <= self.game_seed < 1 << 64:
+                raise ValueError("game_seed must be an unsigned 64-bit integer")
+            if any(not 0 <= seed < 1 << 64 for seed in self.search_seeds):
+                raise ValueError("search seeds must be unsigned 64-bit integers")
+            if any(value < 0 for value in self.search_budgets):
+                raise ValueError("search budgets cannot be negative")
+            if any(value < 0 for value in normalized_temperatures):
+                raise ValueError("temperatures cannot be negative")
+            for index, available in enumerate(self.search_metadata_mask):
+                if available and self.search_budgets[index] <= 0:
+                    raise ValueError("available search metadata requires a positive budget")
+            if self.source_kind == "selfplay/mcts":
+                identities = (
+                    self.task_id,
+                    self.black_agent_id,
+                    self.white_agent_id,
+                    self.publication_sha256,
+                    self.feature_schema_id,
+                    self.search_config_sha256,
+                )
+                if any(not value for value in identities) or not all(
+                    self.search_metadata_mask
+                ):
+                    raise ValueError("MCTS self-play trajectories require complete identities")
         expected = self.compute_content_sha256()
         if self.content_sha256 and self.content_sha256 != expected:
             raise ValueError("trajectory content_sha256 does not match its contents")
@@ -134,8 +218,7 @@ class TrajectoryRecord:
         return self.policy_actions[start:end], self.policy_values[start:end]
 
     def compute_content_sha256(self) -> str:
-        return _sha256_json(
-            {
+        payload = {
                 "schema_version": self.schema_version,
                 "game_id": self.game_id,
                 "dataset_id": self.dataset_id,
@@ -157,7 +240,29 @@ class TrajectoryRecord:
                 "ownership_black": self.ownership_black,
                 "ownership_available": self.ownership_available,
             }
-        )
+        if self.schema_version >= 3:
+            payload.update(
+                {
+                    "source_kind": self.source_kind,
+                    "task_id": self.task_id,
+                    "termination": self.termination,
+                    "game_seed": self.game_seed,
+                    "black_agent_id": self.black_agent_id,
+                    "white_agent_id": self.white_agent_id,
+                    "publication_sha256": self.publication_sha256,
+                    "feature_schema_id": self.feature_schema_id,
+                    "search_config_sha256": self.search_config_sha256,
+                    "search_budgets": self.search_budgets,
+                    "root_values": self.root_values,
+                    "root_score_margins": self.root_score_margins,
+                    "temperatures": self.temperatures,
+                    "search_seeds": self.search_seeds,
+                    "root_noise_mask": self.root_noise_mask,
+                    "search_metadata_mask": self.search_metadata_mask,
+                    "root_score_mask": self.root_score_mask,
+                }
+            )
+        return _sha256_json(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +282,7 @@ class AnnotationRecord:
     content_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.schema_version != RECORD_SCHEMA_VERSION:
+        if self.schema_version not in SUPPORTED_RECORD_SCHEMA_VERSIONS:
             raise ValueError("unsupported annotation record schema")
         try:
             bytes.fromhex(self.game_id)

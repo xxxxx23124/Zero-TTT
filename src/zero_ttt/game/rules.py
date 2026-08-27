@@ -13,6 +13,7 @@ BOARD_AREA = BOARD_SIZE * BOARD_SIZE
 PASS_ACTION = BOARD_AREA
 ACTION_SIZE = BOARD_AREA + 1
 EMPTY = 0
+RULES_ID = "tromp-taylor-positional-superko-19x19-v1"
 
 
 class Color(IntEnum):

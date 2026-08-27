@@ -25,6 +25,8 @@ from zero_ttt.training.losses import TrainingTargets, compute_losses
 class LearnerDataIdentity:
     snapshot_id: str
     sampling_config_sha256: str
+    mixture_manifest_sha256: str = ""
+    component_snapshot_ids: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -361,6 +363,10 @@ class Learner:
             if stored.sha256 != self.config.sha256:
                 raise ValueError("checkpoint configuration does not match this run")
         stored_identity = payload.get("data_identity")
+        if stored_identity is not None:
+            stored_identity = dict(stored_identity)
+            stored_identity.setdefault("mixture_manifest_sha256", "")
+            stored_identity.setdefault("component_snapshot_ids", ())
         expected_identity = None if self.data_identity is None else asdict(self.data_identity)
         if stored_identity != expected_identity:
             raise ValueError("checkpoint data snapshot or sampling configuration does not match")
@@ -389,4 +395,3 @@ class Learner:
 
 Trainer = Learner
 TrainerState = LearnerState
-

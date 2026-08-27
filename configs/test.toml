@@ -1,4 +1,4 @@
-schema_version = 4
+schema_version = 5
 run_name = "test"
 seed = 7
 
@@ -63,6 +63,21 @@ activation_checkpoint = false
 activation_checkpoint_stride = 2
 compile_model = false
 compile_mode = "default"
+
+[search]
+max_simulations = 64
+uct_c = 1.41
+dirichlet_epsilon = 0.25
+dirichlet_alpha = 0.03
+temperature = 1.0
+temperature_drop_ply = 30
+
+[selfplay]
+actor_count = 16
+inference_batch_size = 16
+batch_wait_ms = 2.0
+inference_cache_size = 32768
+compile_inference = false
 
 [runtime]
 run_dir = "runs/test"

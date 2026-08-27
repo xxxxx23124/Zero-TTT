@@ -102,6 +102,25 @@ class ExecutionConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchConfig:
+    max_simulations: int
+    uct_c: float
+    dirichlet_epsilon: float
+    dirichlet_alpha: float
+    temperature: float
+    temperature_drop_ply: int
+
+
+@dataclass(frozen=True, slots=True)
+class SelfPlayConfig:
+    actor_count: int
+    inference_batch_size: int
+    batch_wait_ms: float
+    inference_cache_size: int
+    compile_inference: bool
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeConfig:
     run_dir: str
     device: str
@@ -117,6 +136,8 @@ class ExperimentConfig:
     model: ModelConfig
     training: TrainingConfig
     execution: ExecutionConfig
+    search: SearchConfig
+    selfplay: SelfPlayConfig
     runtime: RuntimeConfig
 
     def canonical_json(self) -> str:
@@ -224,7 +245,7 @@ def _normalize_training_schedule(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_config(config: ExperimentConfig) -> None:
-    if config.schema_version != 4:
+    if config.schema_version != 5:
         raise ValueError(f"unsupported schema_version={config.schema_version}")
     if config.game.board_size != 19:
         raise ValueError("only 19x19 is supported")
@@ -288,6 +309,25 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("execution.activation_checkpoint_stride must be positive")
     if not execution.compile_mode:
         raise ValueError("execution.compile_mode cannot be empty")
+    search = config.search
+    if search.max_simulations < 2:
+        raise ValueError("search.max_simulations must be at least 2")
+    if search.uct_c <= 0 or search.dirichlet_alpha <= 0:
+        raise ValueError("search constants must be positive")
+    if not 0 <= search.dirichlet_epsilon <= 1:
+        raise ValueError("search.dirichlet_epsilon must be in [0, 1]")
+    if search.temperature < 0 or search.temperature_drop_ply < 0:
+        raise ValueError("search temperature settings must be non-negative")
+    selfplay = config.selfplay
+    if (
+        selfplay.actor_count <= 0
+        or selfplay.inference_batch_size <= 0
+        or selfplay.inference_cache_size <= 0
+        or selfplay.batch_wait_ms < 0
+    ):
+        raise ValueError("selfplay batching settings are invalid")
+    if selfplay.actor_count < selfplay.inference_batch_size:
+        raise ValueError("selfplay.actor_count must cover one inference batch")
     if config.runtime.device not in {"cpu", "cuda"}:
         raise ValueError("runtime.device must be 'cpu' or 'cuda'")
     if config.runtime.ema_device not in {"cpu", "cuda"}:
@@ -312,3 +352,9 @@ def config_from_mapping(raw: dict[str, Any]) -> ExperimentConfig:
     )
     validate_config(config)
     return config
+
+
+def model_config_from_mapping(raw: dict[str, Any]) -> ModelConfig:
+    """Parse only the stable model section embedded in a publication."""
+
+    return _construct_dataclass(ModelConfig, raw, "config.model")

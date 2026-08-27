@@ -70,12 +70,34 @@ def _parser() -> argparse.ArgumentParser:
     snapshot.add_argument("--seed", required=True, type=int)
     snapshot.add_argument("--split", choices=("train", "validation"), default="train")
     snapshot.add_argument("--validation-fraction", type=float, default=0.1)
+    snapshot.add_argument("--source-kind", choices=("external", "selfplay"))
+    snapshot.add_argument("--task-id")
+
+    mixture = subparsers.add_parser("mixture-create")
+    mixture.add_argument(
+        "--component",
+        action="append",
+        required=True,
+        help="snapshot SHA-256 and weight as SNAPSHOT=WEIGHT",
+    )
+    mixture.add_argument("--output", required=True)
+
+    selfplay = subparsers.add_parser("selfplay-collect")
+    _add_config(selfplay)
+    selfplay.add_argument("--publication", required=True)
+    selfplay.add_argument("--store-root", required=True)
+    selfplay.add_argument("--catalog", required=True)
+    selfplay.add_argument("--games", required=True, type=int)
+    selfplay.add_argument("--seed", type=int)
+    selfplay.add_argument("--target-shard-bytes", type=int, default=128 * 1024 * 1024)
 
     offline = subparsers.add_parser("offline-imitation")
     _add_config(offline)
     offline.add_argument("--store-root", required=True)
     offline.add_argument("--catalog", required=True)
-    offline.add_argument("--snapshot", required=True)
+    offline_data = offline.add_mutually_exclusive_group(required=True)
+    offline_data.add_argument("--snapshot")
+    offline_data.add_argument("--mixture")
     offline.add_argument("--steps", required=True, type=int)
     offline.add_argument(
         "--annotation-mode",
@@ -159,17 +181,36 @@ def _offline_imitation(arguments: argparse.Namespace) -> None:
     rng = np.random.default_rng(config.seed)
     run_dir = config.run_dir
     manager = CheckpointManager(run_dir, keep=config.training.checkpoint_keep)
-    with CatalogBatchSource(
-        arguments.catalog,
-        arguments.store_root,
-        arguments.snapshot,
-        annotation_mode=arguments.annotation_mode,
-        teacher_fingerprint=arguments.teacher_fingerprint,
-    ) as source:
+    if arguments.mixture:
+        if arguments.annotation_mode != "none" or arguments.teacher_fingerprint:
+            raise ValueError("mixture training does not yet support teacher annotation modes")
+        from zero_ttt.data.mixture import MixtureBatchSource, TrainingMixtureManifest
+
+        mixture = TrainingMixtureManifest.load(arguments.mixture)
+        source_context = MixtureBatchSource(
+            arguments.catalog,
+            arguments.store_root,
+            mixture,
+        )
+        identity = LearnerDataIdentity(
+            snapshot_id=f"mixture:{mixture.content_sha256}",
+            sampling_config_sha256=source_context.sampling_config_sha256,
+            mixture_manifest_sha256=mixture.content_sha256,
+            component_snapshot_ids=source_context.component_snapshot_ids,
+        )
+    else:
+        source_context = CatalogBatchSource(
+            arguments.catalog,
+            arguments.store_root,
+            arguments.snapshot,
+            annotation_mode=arguments.annotation_mode,
+            teacher_fingerprint=arguments.teacher_fingerprint,
+        )
         identity = LearnerDataIdentity(
             snapshot_id=arguments.snapshot,
-            sampling_config_sha256=source.sampling_config_sha256,
+            sampling_config_sha256=source_context.sampling_config_sha256,
         )
+    with source_context as source:
         learner = Learner(
             config,
             manager,
@@ -215,6 +256,83 @@ def _offline_imitation(arguments: argparse.Namespace) -> None:
         )
 
 
+def _mixture_create(arguments: argparse.Namespace) -> None:
+    from zero_ttt.data.mixture import MixtureComponent, TrainingMixtureManifest
+
+    components = []
+    for value in arguments.component:
+        snapshot_id, separator, raw_weight = value.rpartition("=")
+        if not separator or not snapshot_id or not raw_weight:
+            raise ValueError("mixture components must use SNAPSHOT=WEIGHT")
+        try:
+            weight = float(raw_weight)
+        except ValueError as error:
+            raise ValueError("mixture component weight must be numeric") from error
+        components.append(MixtureComponent(snapshot_id, weight))
+    manifest = TrainingMixtureManifest(1, tuple(components))
+    manifest.save(arguments.output)
+    print(
+        json.dumps(
+            {
+                "mixture": arguments.output,
+                "content_sha256": manifest.content_sha256,
+                "components": len(components),
+            }
+        )
+    )
+
+
+def _selfplay_collect(arguments: argparse.Namespace) -> None:
+    from zero_ttt.game.features import FEATURE_SCHEMA_ID
+    from zero_ttt.game.rules import RULES_ID
+    from zero_ttt.inference import BatchedInferenceBroker, PublicationPositionEvaluator
+    from zero_ttt.selfplay.collector import SelfPlayCollector, search_config_sha256
+
+    config = load_config(arguments.config)
+    evaluator = PublicationPositionEvaluator(
+        arguments.publication,
+        device=config.runtime.device,
+        inference_batch_size=config.selfplay.inference_batch_size,
+        compile_model=config.selfplay.compile_inference,
+        compile_mode=config.execution.compile_mode,
+    )
+    if evaluator.device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(evaluator.device)
+    search_hash = search_config_sha256(config)
+    evaluator_id = hashlib.sha256(
+        json.dumps(
+            [evaluator.model_version, FEATURE_SCHEMA_ID, RULES_ID, search_hash],
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    with BatchedInferenceBroker(
+        evaluator,
+        batch_size=config.selfplay.inference_batch_size,
+        batch_wait_ms=config.selfplay.batch_wait_ms,
+        cache_size=config.selfplay.inference_cache_size,
+    ) as broker:
+        summary = SelfPlayCollector(
+            config,
+            broker,
+            publication_sha256=evaluator.publication_sha256,
+            evaluator_id=evaluator_id,
+            store_root=arguments.store_root,
+            catalog_path=arguments.catalog,
+            games=arguments.games,
+            seed=config.seed if arguments.seed is None else arguments.seed,
+            target_shard_bytes=arguments.target_shard_bytes,
+        ).collect()
+    payload = asdict(summary)
+    if evaluator.device.type == "cuda":
+        torch.cuda.synchronize(evaluator.device)
+        payload["gpu_peak_allocated_bytes"] = torch.cuda.max_memory_allocated(
+            evaluator.device
+        )
+    else:
+        payload["gpu_peak_allocated_bytes"] = 0
+    print(json.dumps(payload))
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     if arguments.command == "config-check":
@@ -258,8 +376,14 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.seed,
                 arguments.split,
                 arguments.validation_fraction,
+                arguments.source_kind,
+                arguments.task_id,
             )
         print(json.dumps({"snapshot_id": snapshot_id, "split": arguments.split}))
+    elif arguments.command == "mixture-create":
+        _mixture_create(arguments)
+    elif arguments.command == "selfplay-collect":
+        _selfplay_collect(arguments)
     else:
         _offline_imitation(arguments)
     return 0

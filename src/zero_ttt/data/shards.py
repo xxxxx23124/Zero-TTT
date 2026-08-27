@@ -11,8 +11,14 @@ from typing import Literal
 
 import numpy as np
 
-from zero_ttt.data.records import AnnotationRecord, RECORD_SCHEMA_VERSION, TrajectoryRecord
-SHARD_SCHEMA_VERSION = 2
+from zero_ttt.data.records import (
+    AnnotationRecord,
+    RECORD_SCHEMA_VERSION,
+    SUPPORTED_RECORD_SCHEMA_VERSIONS,
+    TrajectoryRecord,
+)
+SHARD_SCHEMA_VERSION = 3
+SUPPORTED_SHARD_SCHEMA_VERSIONS = frozenset({2, 3})
 ShardKind = Literal["trajectory", "annotation"]
 
 
@@ -98,6 +104,8 @@ class ShardStore:
     def write_trajectories(self, records: list[TrajectoryRecord]) -> ShardInfo:
         if not records:
             raise ValueError("cannot write an empty trajectory shard")
+        if any(record.schema_version != RECORD_SCHEMA_VERSION for record in records):
+            raise ValueError("new trajectory shards must use the current record schema")
         move_offsets, moves = _concatenate_int([record.moves for record in records], np.int16)
         policy_game_offsets = np.zeros(len(records) + 1, dtype=np.int64)
         policy_game_offsets[1:] = np.cumsum(
@@ -150,18 +158,85 @@ class ShardStore:
             "ownership_mask": np.asarray(
                 [record.ownership_available for record in records], dtype=np.bool_
             ),
+            "game_seeds": np.asarray([record.game_seed for record in records], dtype=np.uint64),
+            "search_budgets": np.asarray(
+                [value for record in records for value in record.search_budgets],
+                dtype=np.int32,
+            ),
+            "root_values": np.asarray(
+                [value for record in records for value in record.root_values],
+                dtype=np.float32,
+            ),
+            "root_score_margins": np.asarray(
+                [value for record in records for value in record.root_score_margins],
+                dtype=np.float32,
+            ),
+            "temperatures": np.asarray(
+                [value for record in records for value in record.temperatures],
+                dtype=np.float32,
+            ),
+            "search_seeds": np.asarray(
+                [value for record in records for value in record.search_seeds],
+                dtype=np.uint64,
+            ),
+            "root_noise_mask": np.asarray(
+                [value for record in records for value in record.root_noise_mask],
+                dtype=np.bool_,
+            ),
+            "search_metadata_mask": np.asarray(
+                [value for record in records for value in record.search_metadata_mask],
+                dtype=np.bool_,
+            ),
+            "root_score_mask": np.asarray(
+                [value for record in records for value in record.root_score_mask],
+                dtype=np.bool_,
+            ),
         }
         arrays.update(_pack_text("dataset_ids", [record.dataset_id for record in records]))
         arrays.update(_pack_text("member_paths", [record.member_path for record in records]))
         arrays.update(_pack_text("rules", [record.rules for record in records]))
+        arrays.update(_pack_text("source_kinds", [record.source_kind for record in records]))
+        arrays.update(_pack_text("task_ids", [record.task_id for record in records]))
+        arrays.update(_pack_text("terminations", [record.termination for record in records]))
+        arrays.update(
+            _pack_text("black_agent_ids", [record.black_agent_id for record in records])
+        )
+        arrays.update(
+            _pack_text("white_agent_ids", [record.white_agent_id for record in records])
+        )
+        arrays.update(
+            _pack_text(
+                "publication_hashes", [record.publication_sha256 for record in records]
+            )
+        )
+        arrays.update(
+            _pack_text(
+                "feature_schema_ids", [record.feature_schema_id for record in records]
+            )
+        )
+        arrays.update(
+            _pack_text(
+                "search_config_hashes", [record.search_config_sha256 for record in records]
+            )
+        )
         return self._write("trajectory", arrays, len(records), int(policy_game_offsets[-1]))
 
     def read_trajectories(self, info_or_path: ShardInfo | str | Path) -> tuple[TrajectoryRecord, ...]:
         path = self._coerce_path(info_or_path)
         with self._open_validated(path, expected_kind=1) as archive:
+            record_schema = int(archive["record_schema_version"])
             dataset_ids = _unpack_text(archive, "dataset_ids")
             member_paths = _unpack_text(archive, "member_paths")
             rules = _unpack_text(archive, "rules")
+            if record_schema >= 3:
+                source_kinds = _unpack_text(archive, "source_kinds")
+                task_ids = _unpack_text(archive, "task_ids")
+                terminations = _unpack_text(archive, "terminations")
+                black_agent_ids = _unpack_text(archive, "black_agent_ids")
+                white_agent_ids = _unpack_text(archive, "white_agent_ids")
+                publication_hashes = _unpack_text(archive, "publication_hashes")
+                feature_schema_ids = _unpack_text(archive, "feature_schema_ids")
+                search_config_hashes = _unpack_text(archive, "search_config_hashes")
             records = []
             count = len(archive["game_ids"])
             for index in range(count):
@@ -173,7 +248,7 @@ class ShardStore:
                 row_offsets = row_offsets - row_offsets[0]
                 records.append(
                     TrajectoryRecord(
-                        schema_version=int(archive["record_schema_version"]),
+                        schema_version=record_schema,
                         game_id=bytes(archive["game_ids"][index]).hex(),
                         content_sha256=bytes(archive["content_hashes"][index]).hex(),
                         dataset_id=dataset_ids[index],
@@ -200,6 +275,95 @@ class ShardStore:
                             float(value) for value in archive["ownership_black"][index]
                         ),
                         ownership_available=bool(archive["ownership_mask"][index]),
+                        source_kind=(
+                            source_kinds[index]
+                            if record_schema >= 3
+                            else "external/played_move"
+                        ),
+                        task_id=task_ids[index] if record_schema >= 3 else "",
+                        termination=terminations[index] if record_schema >= 3 else "external",
+                        game_seed=(
+                            int(archive["game_seeds"][index]) if record_schema >= 3 else 0
+                        ),
+                        black_agent_id=(
+                            black_agent_ids[index] if record_schema >= 3 else ""
+                        ),
+                        white_agent_id=(
+                            white_agent_ids[index] if record_schema >= 3 else ""
+                        ),
+                        publication_sha256=(
+                            publication_hashes[index] if record_schema >= 3 else ""
+                        ),
+                        feature_schema_id=(
+                            feature_schema_ids[index] if record_schema >= 3 else ""
+                        ),
+                        search_config_sha256=(
+                            search_config_hashes[index] if record_schema >= 3 else ""
+                        ),
+                        search_budgets=(
+                            tuple(
+                                int(value)
+                                for value in archive["search_budgets"][position_start:position_end]
+                            )
+                            if record_schema >= 3
+                            else ()
+                        ),
+                        root_values=(
+                            tuple(
+                                float(value)
+                                for value in archive["root_values"][position_start:position_end]
+                            )
+                            if record_schema >= 3
+                            else ()
+                        ),
+                        root_score_margins=(
+                            tuple(
+                                float(value)
+                                for value in archive["root_score_margins"][position_start:position_end]
+                            )
+                            if record_schema >= 3
+                            else ()
+                        ),
+                        temperatures=(
+                            tuple(
+                                float(value)
+                                for value in archive["temperatures"][position_start:position_end]
+                            )
+                            if record_schema >= 3
+                            else ()
+                        ),
+                        search_seeds=(
+                            tuple(
+                                int(value)
+                                for value in archive["search_seeds"][position_start:position_end]
+                            )
+                            if record_schema >= 3
+                            else ()
+                        ),
+                        root_noise_mask=(
+                            tuple(
+                                bool(value)
+                                for value in archive["root_noise_mask"][position_start:position_end]
+                            )
+                            if record_schema >= 3
+                            else ()
+                        ),
+                        search_metadata_mask=(
+                            tuple(
+                                bool(value)
+                                for value in archive["search_metadata_mask"][position_start:position_end]
+                            )
+                            if record_schema >= 3
+                            else ()
+                        ),
+                        root_score_mask=(
+                            tuple(
+                                bool(value)
+                                for value in archive["root_score_mask"][position_start:position_end]
+                            )
+                            if record_schema >= 3
+                            else ()
+                        ),
                     )
                 )
         return tuple(records)
@@ -207,6 +371,8 @@ class ShardStore:
     def write_annotations(self, records: list[AnnotationRecord]) -> ShardInfo:
         if not records:
             raise ValueError("cannot write an empty annotation shard")
+        if any(record.schema_version != RECORD_SCHEMA_VERSION for record in records):
+            raise ValueError("new annotation shards must use the current record schema")
         policy_offsets, policy_actions = _concatenate_int(
             [record.policy_actions for record in records], np.int16
         )
@@ -362,14 +528,14 @@ class ShardStore:
         archive = np.load(path, allow_pickle=False)
         try:
             actual_schema = int(archive["schema_version"])
-            if actual_schema != SHARD_SCHEMA_VERSION:
+            if actual_schema not in SUPPORTED_SHARD_SCHEMA_VERSIONS:
                 raise ValueError(
-                    f"unsupported shard schema v{actual_schema}; rebuild data shards for v2"
+                    f"unsupported shard schema v{actual_schema}; rebuild data shards for v2 or later"
                 )
             record_schema = int(archive["record_schema_version"])
-            if record_schema != RECORD_SCHEMA_VERSION:
+            if record_schema not in SUPPORTED_RECORD_SCHEMA_VERSIONS:
                 raise ValueError(
-                    f"unsupported record schema v{record_schema}; rebuild data shards for v2"
+                    f"unsupported record schema v{record_schema}; rebuild data shards for v2 or later"
                 )
             if expected_kind is not None and int(archive["kind"]) != expected_kind:
                 raise ValueError("unexpected shard kind")

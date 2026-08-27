@@ -13,7 +13,7 @@ from zero_ttt.data.records import AnnotationRecord, ImportEvent, TrajectoryRecor
 from zero_ttt.data.shards import ShardInfo, ShardStore
 
 
-CATALOG_SCHEMA_VERSION = 2
+CATALOG_SCHEMA_VERSION = 3
 
 
 def _hash_identity_field(digest: "hashlib._Hash", value: str) -> None:
@@ -84,6 +84,8 @@ class Catalog:
                     relative_path TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL,
                     status TEXT NOT NULL,
+                    source_kind TEXT NOT NULL DEFAULT 'external',
+                    task_id TEXT,
                     UNIQUE(dataset_id, relative_path)
                 );
                 CREATE TABLE IF NOT EXISTS shards (
@@ -130,7 +132,20 @@ class Catalog:
                     seed INTEGER NOT NULL,
                     split TEXT NOT NULL,
                     validation_fraction REAL NOT NULL,
+                    source_kind TEXT,
+                    task_id TEXT,
                     created_ns INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS selfplay_tasks (
+                    task_id TEXT PRIMARY KEY,
+                    asset_sha256 TEXT NOT NULL REFERENCES assets(asset_sha256),
+                    publication_sha256 TEXT NOT NULL,
+                    evaluator_id TEXT NOT NULL,
+                    search_config_sha256 TEXT NOT NULL,
+                    requested_games INTEGER NOT NULL CHECK(requested_games > 0),
+                    status TEXT NOT NULL,
+                    created_ns INTEGER NOT NULL,
+                    completed_ns INTEGER
                 );
                 CREATE TABLE IF NOT EXISTS snapshot_trajectories (
                     snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
@@ -177,10 +192,32 @@ class Catalog:
                     "INSERT INTO catalog_meta(key,value) VALUES('schema_version',?)",
                     (str(CATALOG_SCHEMA_VERSION),),
                 )
+            elif int(current["value"]) == 2:
+                asset_columns = {
+                    row["name"] for row in self.connection.execute("PRAGMA table_info(assets)")
+                }
+                if "source_kind" not in asset_columns:
+                    self.connection.execute(
+                        "ALTER TABLE assets ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'external'"
+                    )
+                if "task_id" not in asset_columns:
+                    self.connection.execute("ALTER TABLE assets ADD COLUMN task_id TEXT")
+                snapshot_columns = {
+                    row["name"]
+                    for row in self.connection.execute("PRAGMA table_info(snapshots)")
+                }
+                if "source_kind" not in snapshot_columns:
+                    self.connection.execute("ALTER TABLE snapshots ADD COLUMN source_kind TEXT")
+                if "task_id" not in snapshot_columns:
+                    self.connection.execute("ALTER TABLE snapshots ADD COLUMN task_id TEXT")
+                self.connection.execute(
+                    "UPDATE catalog_meta SET value=? WHERE key='schema_version'",
+                    (str(CATALOG_SCHEMA_VERSION),),
+                )
             elif int(current["value"]) != CATALOG_SCHEMA_VERSION:
                 raise ValueError(
                     f"unsupported catalog schema v{current['value']}; "
-                    "rebuild the catalog and snapshots for v2"
+                    "rebuild the catalog and snapshots for v2 or later"
                 )
 
     def register_asset(self, manifest: SourceManifest, asset: ManifestAsset) -> None:
@@ -193,6 +230,79 @@ class Catalog:
                 """,
                 (asset.sha256, manifest.dataset_id, asset.relative_path, asset.size_bytes),
             )
+
+    def register_selfplay_task(
+        self,
+        *,
+        task_id: str,
+        manifest_relative_path: str,
+        manifest_sha256: str,
+        manifest_size_bytes: int,
+        publication_sha256: str,
+        evaluator_id: str,
+        search_config_sha256: str,
+        requested_games: int,
+    ) -> None:
+        if not task_id or requested_games <= 0:
+            raise ValueError("invalid self-play task identity")
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO assets(
+                    asset_sha256,dataset_id,relative_path,size_bytes,status,source_kind,task_id
+                ) VALUES(?,?,?,?, 'verified','selfplay',?)
+                ON CONFLICT(asset_sha256) DO UPDATE SET status='verified'
+                """,
+                (
+                    manifest_sha256,
+                    f"selfplay/{task_id}",
+                    manifest_relative_path,
+                    manifest_size_bytes,
+                    task_id,
+                ),
+            )
+            existing = self.connection.execute(
+                "SELECT * FROM selfplay_tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            identity = (
+                manifest_sha256,
+                publication_sha256,
+                evaluator_id,
+                search_config_sha256,
+                requested_games,
+            )
+            if existing is not None:
+                stored = (
+                    existing["asset_sha256"],
+                    existing["publication_sha256"],
+                    existing["evaluator_id"],
+                    existing["search_config_sha256"],
+                    existing["requested_games"],
+                )
+                if stored != identity:
+                    raise ValueError("conflicting self-play task identity")
+                return
+            self.connection.execute(
+                """
+                INSERT INTO selfplay_tasks(
+                    task_id,asset_sha256,publication_sha256,evaluator_id,
+                    search_config_sha256,requested_games,status,created_ns
+                ) VALUES(?,?,?,?,?,?,'collecting',?)
+                """,
+                (task_id, *identity, time.time_ns()),
+            )
+
+    def set_selfplay_task_status(self, task_id: str, status: str) -> None:
+        if status not in {"collecting", "sealed", "failed"}:
+            raise ValueError("invalid self-play task status")
+        completed_ns = time.time_ns() if status == "sealed" else None
+        with self.connection:
+            changed = self.connection.execute(
+                "UPDATE selfplay_tasks SET status=?,completed_ns=? WHERE task_id=?",
+                (status, completed_ns, task_id),
+            ).rowcount
+        if not changed:
+            raise KeyError(task_id)
 
     def set_asset_status(self, asset_sha256: str, status: str) -> None:
         if status not in {"verified", "partial", "imported"}:
@@ -350,11 +460,17 @@ class Catalog:
         seed: int,
         split: str = "train",
         validation_fraction: float = 0.1,
+        source_kind: str | None = None,
+        task_id: str | None = None,
     ) -> str:
         if split not in {"train", "validation"}:
             raise ValueError("split must be train or validation")
         if not 0.0 <= validation_fraction < 1.0:
             raise ValueError("validation_fraction must be in [0, 1)")
+        if source_kind not in {None, "external", "selfplay"}:
+            raise ValueError("source_kind must be external or selfplay")
+        if task_id is not None and source_kind != "selfplay":
+            raise ValueError("task_id filtering requires source_kind=selfplay")
         threshold = int(validation_fraction * (1 << 64))
         self.connection.execute(
             """
@@ -384,8 +500,14 @@ class Catalog:
             for row in self.connection.execute(
                 """
                 SELECT game_id,content_sha256
-                FROM trajectories WHERE deleted=0 ORDER BY game_id
-                """
+                FROM trajectories WHERE deleted=0
+                  AND (? IS NULL OR asset_sha256 IN (
+                    SELECT asset_sha256 FROM assets WHERE source_kind=?
+                      AND (? IS NULL OR task_id=?)
+                  ))
+                ORDER BY game_id
+                """,
+                (source_kind, source_kind, task_id, task_id),
             ):
                 game_id = row["game_id"]
                 split_digest = hashlib.sha256(f"{seed}:{game_id}".encode("ascii")).digest()
@@ -422,6 +544,10 @@ class Catalog:
                 float(validation_fraction).hex(),
             ):
                 _hash_identity_field(identity, field)
+            if source_kind is not None:
+                _hash_identity_field(identity, "source-filter")
+                _hash_identity_field(identity, source_kind)
+                _hash_identity_field(identity, task_id or "")
             for row in self.connection.execute(
                 """
                 SELECT game_id,content_sha256
@@ -447,10 +573,18 @@ class Catalog:
             created = self.connection.execute(
                 """
                 INSERT OR IGNORE INTO snapshots(
-                    snapshot_id,seed,split,validation_fraction,created_ns
-                ) VALUES(?,?,?,?,?)
+                    snapshot_id,seed,split,validation_fraction,source_kind,task_id,created_ns
+                ) VALUES(?,?,?,?,?,?,?)
                 """,
-                (snapshot_id, seed, split, validation_fraction, time.time_ns()),
+                (
+                    snapshot_id,
+                    seed,
+                    split,
+                    validation_fraction,
+                    source_kind,
+                    task_id,
+                    time.time_ns(),
+                ),
             ).rowcount
             if created:
                 self.connection.execute(

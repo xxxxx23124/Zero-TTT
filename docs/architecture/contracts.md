@@ -1,7 +1,7 @@
 # 公共契约
 
 数据与推理接口位于 `zero_ttt.data` 和 `zero_ttt.inference`；模型的稳定导入面位于
-`zero_ttt.model`。Learner 与首版持久 schema 已实现；OpenSpiel adapter 和教师服务仍未实现。
+`zero_ttt.model`。Learner、v3 持久 schema 和 OpenSpiel adapter 已实现；教师服务仍未实现。
 
 ## TrainBatch
 
@@ -28,7 +28,7 @@ policy 来源可以是人类实战落子、学生 MCTS 访问分布或教师搜�
 `InferenceBatch` 接收相同特征张量与合法着掩码；`InferenceOutput` 返回 policy logits、value，
 并可返回 ownership/score。实现必须暴露不可混淆的 `model_version`。
 
-未来 OpenSpiel Evaluator 将合法着 logits 归一化为 prior，并把“当前行棋方”value 转成双方
+OpenSpiel Evaluator 将合法着 logits 归一化为 prior，并把“当前行棋方”value 转成双方
 value 数组。一次搜索内 publication、特征 schema、规则和未来快状态版本必须冻结。
 
 ## 持久逻辑契约

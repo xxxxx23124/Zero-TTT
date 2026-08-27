@@ -11,7 +11,7 @@ from zero_ttt.data.catalog import Catalog
 from zero_ttt.data.catalog_source import CatalogBatchSource
 from zero_ttt.data.manifest import ManifestAsset
 from zero_ttt.data.records import AnnotationRecord, RECORD_SCHEMA_VERSION, TrajectoryRecord
-from zero_ttt.data.shards import ShardStore
+from zero_ttt.data.shards import ShardStore, _hex_matrix, _pack_text
 from zero_ttt.game.rules import BOARD_AREA
 
 
@@ -250,6 +250,62 @@ def test_v1_records_and_shards_are_rejected_with_rebuild_guidance(
     with pytest.raises(ValueError, match="rebuild.*v2"):
         with ShardStore._open_validated(path):
             pass
+
+
+def test_v2_trajectory_shard_remains_readable(
+    tmp_path: Path,
+    trajectory_factory,
+) -> None:
+    record = dataclasses.replace(
+        trajectory_factory(),
+        schema_version=2,
+        content_sha256="",
+    )
+    positions = record.trainable_position_count
+    arrays = {
+        "schema_version": np.asarray(2, dtype=np.int32),
+        "record_schema_version": np.asarray(2, dtype=np.int32),
+        "kind": np.asarray(1, dtype=np.uint8),
+        "game_ids": _hex_matrix([record.game_id]),
+        "content_hashes": _hex_matrix([record.content_sha256]),
+        "asset_hashes": _hex_matrix([record.asset_sha256]),
+        "ordinals": np.asarray([record.ordinal], dtype=np.int64),
+        "komi_half_points": np.asarray([record.komi_half_points], dtype=np.int16),
+        "max_moves": np.asarray([record.max_moves], dtype=np.int32),
+        "move_offsets": np.asarray([0, len(record.moves)], dtype=np.int64),
+        "moves": np.asarray(record.moves, dtype=np.int16),
+        "trainable_start_ply": np.asarray([record.trainable_start_ply], dtype=np.int32),
+        "policy_game_offsets": np.asarray([0, positions], dtype=np.int64),
+        "policy_row_offsets": np.asarray(record.policy_row_offsets, dtype=np.int64),
+        "policy_actions": np.asarray(record.policy_actions, dtype=np.int16),
+        "policy_values": np.asarray(record.policy_values, dtype=np.float32),
+        "value_black": np.asarray([record.value_black], dtype=np.float32),
+        "value_mask": np.asarray([record.value_available], dtype=np.bool_),
+        "score_margin_black": np.asarray([record.score_margin_black], dtype=np.float32),
+        "score_mask": np.asarray([record.score_available], dtype=np.bool_),
+        "ownership_black": np.asarray([record.ownership_black], dtype=np.float32),
+        "ownership_mask": np.asarray([record.ownership_available], dtype=np.bool_),
+    }
+    arrays.update(_pack_text("dataset_ids", [record.dataset_id]))
+    arrays.update(_pack_text("member_paths", [record.member_path]))
+    arrays.update(_pack_text("rules", [record.rules]))
+    path = tmp_path / "legacy-v2.npz"
+    np.savez(path, **arrays)
+    assert ShardStore(tmp_path / "store").read_trajectories(path) == (record,)
+
+
+def test_v2_catalog_metadata_is_upgraded_in_place(tmp_path: Path) -> None:
+    path = tmp_path / "catalog.sqlite"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE catalog_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+    connection.execute("INSERT INTO catalog_meta VALUES('schema_version','2')")
+    connection.commit()
+    connection.close()
+    with Catalog(path, ShardStore(tmp_path / "processed")) as catalog:
+        version = catalog.connection.execute(
+            "SELECT value FROM catalog_meta WHERE key='schema_version'"
+        ).fetchone()[0]
+        assert version == "3"
 
 
 def test_annotation_content_hash_detects_logical_tampering(

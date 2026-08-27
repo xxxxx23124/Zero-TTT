@@ -15,7 +15,7 @@ from typing import Any
 import torch
 
 
-CHECKPOINT_SCHEMA_VERSION = 4
+CHECKPOINT_SCHEMA_VERSION = 5
 
 
 class CheckpointManager:
@@ -186,8 +186,12 @@ class CheckpointManager:
     @staticmethod
     def load(path: str | Path, map_location: str | torch.device = "cpu") -> dict[str, Any]:
         payload = torch.load(Path(path), map_location=map_location, weights_only=False)
-        if payload.get("checkpoint_schema_version") != CHECKPOINT_SCHEMA_VERSION:
-            raise ValueError("unsupported checkpoint schema")
+        actual_schema = payload.get("checkpoint_schema_version")
+        if actual_schema != CHECKPOINT_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported checkpoint schema v{actual_schema}; "
+                f"expected v{CHECKPOINT_SCHEMA_VERSION}; migration is not supported"
+            )
         return payload
 
     @classmethod

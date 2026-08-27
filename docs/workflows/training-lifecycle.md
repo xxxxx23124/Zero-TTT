@@ -1,7 +1,7 @@
 # 统一训练生命周期
 
-状态：已接受的规范性路线，尚未实现。每轮先冻结整盘采集使用的 publication，完成并封存
-数据后再训练、更新 EMA、发布下一版；网络 raw policy 不是自身的改进标签。
+状态：冻结 publication、自博弈封存、snapshot mixture 和 Learner 消费的手动分阶段闭环已实现；
+自动长期协调器尚未实现。网络 raw policy 不是自身的改进标签。
 
 ## 阶段
 

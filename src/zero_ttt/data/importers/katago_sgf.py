@@ -283,6 +283,10 @@ def _build_trajectory(
         score_available=score_available,
         ownership_black=ownership_black,
         ownership_available=ownership_available,
+        termination=(
+            state.termination_reason()
+            or ("resignation" if resigned else "external")
+        ),
     )
 
 

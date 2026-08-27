@@ -1,19 +1,19 @@
 # OpenSpiel MCTS 边界
 
-状态：OpenSpiel 源码已固定，运行时 adapter 尚未实现。项目采用 v2.0.1 的 Python
+状态：首版运行时 adapter、publication evaluator 与 batch-16 自博弈已实现。项目采用 v2.0.1 的 Python
 [`MCTSBot`](https://github.com/google-deepmind/open_spiel/blob/v2.0.1/open_spiel/python/algorithms/mcts.py)
 与自定义 Evaluator，不采用 OpenSpiel 内置模型、Learner 或完整 AlphaZero runner。
 
 源码位于 `third_party/open_spiel`，固定提交
-`112b77704631fc2ce7ad8e4581f6ca09798ce15a`。子模块用于版本审计和未来集成，本轮不把它
-加入 Docker 运行时安装步骤。
+`112b77704631fc2ce7ad8e4581f6ca09798ce15a`。Docker 从该源码构建 `pyspiel`；Abseil、JSON、
+pybind 和 bridge DDS 依赖也锁定到 Dockerfile 中的具体提交。
 
 ## 状态与 evaluator 适配
 
 - 本地 `GameState` 继续唯一维护合法着、完整历史、终局与 Tromp–Taylor 计分。
 - 薄 `pyspiel.Game/State` 只转发 clone、apply_action、legal_actions、current_player、returns
   和终局查询，不重新实现棋规。
-- 自定义 Evaluator 用 `PositionEvaluator` 取得合法着 logits 和当前行棋方 value；logits 只在
+- `OpenSpielGoGame/State` 转发本地不可变状态；自定义 Evaluator 用 `PositionEvaluator` 取得合法着 logits 和当前行棋方 value；logits 只在
   合法动作上 softmax 为 prior，value 转为 OpenSpiel 需要的双方数组。
 - 动作空间固定为 361 个交叉点加 pass；坐标转换只有一个受测实现。
 
@@ -33,8 +33,11 @@
 
 ## 性能约束
 
-Python 自定义游戏适合先做 tiny 垂直切片，但逐局 batch 1 会浪费 GPU。扩大采集前必须实现
-多个棋局并发推进与统一 evaluator 聚批；这属于项目 adapter/采集器，不是重新实现 MCTS。
+采集器以 16 个棋局线程并发推进，共享一个阻塞 evaluator broker；请求最多等待 2 ms，真实
+请求去重后由 publication 后端补齐到固定 batch 16。尾批的 padding 不进入返回结果或统计中的
+真实 evaluation 数。`selfplay-collect` 输出有效/补齐比例、满批比例、平均/最大推理延迟、
+simulations/s、棋规 CPU 总耗时和 CUDA peak allocated bytes。Python 游戏和棋规仍可能成为吞吐
+瓶颈，首版不预先重写 C++ 棋规。
 上游自定义游戏示例也提示 Python 游戏执行 MCTS 会较慢，见
 [`tic_tac_toe.py`](https://github.com/google-deepmind/open_spiel/blob/v2.0.1/open_spiel/python/games/tic_tac_toe.py)。
 

@@ -98,7 +98,7 @@ def test_checkpoint_rejects_different_data_identity(tmp_path: Path) -> None:
         second.restore(path)
 
 
-def test_schema_v4_checkpoint_with_legacy_step_keys_restores(tmp_path: Path) -> None:
+def test_checkpoint_with_legacy_step_keys_restores(tmp_path: Path) -> None:
     config = load_config("configs/test.toml")
     manager = CheckpointManager(tmp_path, keep=2)
     learner = Learner(config, manager)
@@ -120,7 +120,7 @@ def test_schema_v4_checkpoint_with_legacy_step_keys_restores(tmp_path: Path) -> 
     ):
         payload["trainer_state"].pop(key)
     payload.pop("data_identity")
-    path = tmp_path / "legacy-v4.pt"
+    path = tmp_path / "legacy-step-keys.pt"
     torch.save(payload, path)
     learner.restore(path, np.random.default_rng(2))
     assert learner.state.next_ema_sample == config.training.ema_update_interval_samples

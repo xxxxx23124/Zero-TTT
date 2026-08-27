@@ -12,6 +12,7 @@ from zero_ttt.game.state import GameState
 
 POINT_FEATURES = 25
 GLOBAL_FEATURES = 5
+FEATURE_SCHEMA_ID = "zero-ttt-position-features-25x19x19-global5-v1"
 
 
 @dataclass(frozen=True, slots=True)

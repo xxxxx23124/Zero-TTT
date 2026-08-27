@@ -30,7 +30,7 @@ src/zero_ttt/
 `manifest.py` 定义来源许可声明、原文件哈希和格式身份。完整字段语义服从
 [公共契约](contracts.md)与[序列化训练数据](trajectory-storage.md)。
 
-记录类在构造边界校验身份、内容 SHA-256、shape、mask 和稀疏 policy；v2 trajectory 只允许
+记录类在构造边界校验身份、内容 SHA-256、shape、mask 和稀疏 policy；trajectory 只允许
 空棋盘、黑方先行，并由本地 `GameState` 按记录的 `max_moves` 与 moves 重建局面。外部预计算
 特征不是事实来源；未来非空初始局面需要能表达行棋方、历史与劫争身份的独立 schema。
 
@@ -61,7 +61,8 @@ SQLite 不保存大型训练 BLOB，也不为每个 position 建行。随机采�
 eligible position 数加权选择一个 trajectory shard，再在 shard 内采满 microbatch；
 `TrajectoryBatchMaterializer` 对本批每个 shard 至多读取一次，并调用本地 `GameState` 与
 `game.symmetry` 生成 `TrainBatch`。单个 position 的边际分布仍均匀，microbatch 内允许相关。
-多来源 mixture 尚未实现；未来的混合与当前增强都不得进入 Importer、SQLite 或 Learner。
+多来源 mixture 通过不可变 manifest 和 `MixtureBatchSource` 实现；每个 microbatch 只选择一个
+snapshot source，因此仍保持 shard-local 读取。混合与当前增强都不得进入 Importer、SQLite 或 Learner。
 
 NPZ 的读取细节封装在 shard reader 后面。sampling identity 明确包含 shard-local 算法版本、
 annotation 模式与 D4；物理重分片不改变 snapshot 的逻辑内容身份。
@@ -89,4 +90,4 @@ Importer → records → shard store + catalog → BatchSource → TrainBatch �
 - storage 与 sampling 依赖稳定数据契约，不能依赖具体 Importer。
 - annotation 在 sampling 阶段按 `(game_id, ply, teacher_fingerprint)` 连接，不由 Learner join。
 - 首版只实现 g170 SGF policy-first、NPZ shard、SQLite catalog 和离线 `BatchSource` 垂直切片。
-- 自博弈、OpenSpiel、教师队列与课程调度延期；记录契约只为其搜索标签保留可选字段和 mask。
+- 自博弈与 OpenSpiel 已接入；教师队列、自动循环与课程调度延期。

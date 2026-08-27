@@ -29,11 +29,13 @@ KataGo 教师 ─→ annotation shards ─────────────�
   `CatalogBatchSource` 垂直切片。
 - `BatchSource`、带逐样本标签 mask 的 `TrainBatch`、`PositionEvaluator` 三个稳定边界。
 - KataGo v1.17.2 的独立 Docker 入口，以及固定版本的 OpenSpiel 源码子模块。
+- OpenSpiel 本地状态适配、PUCT、自博弈采集、固定 batch-16 publication evaluator 和推理 broker。
+- v3 自博弈审计记录、v2 数据兼容、来源过滤 snapshot 与 snapshot mixture 训练。
 
 ## 当前未实现
 
 - 跨 shard compaction、KataGo rich-NPZ 连接、Leela 混合采样与自动数据窗口监控。
-- `pyspiel.Game/State` 薄适配层、OpenSpiel evaluator 和 MCTS 自博弈采集。
+- 自动采集—训练—发布循环、长期 replay 窗口与棋力评测。
 - KataGo 教师 worker、局域网队列、混合采样和课程调度。
 - 快权重和评级系统。
 

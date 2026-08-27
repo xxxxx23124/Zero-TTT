@@ -9,14 +9,16 @@ Transformer、通用训练器、EMA、checkpoint 和本地 Tromp–Taylor 棋规
 - 625M 与全关闭基线的策略—价值 Transformer 配置。
 - Tromp–Taylor 棋规、特征编码、模型损失和通用 `BatchSource` 训练接口。
 - g170 SGF Importer、版本化 trajectory/annotation NPZ、SQLite catalog 与快照采样。
-- `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v4 checkpoint 和不可变 publication。
+- `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v5 checkpoint 和不可变 publication。
+- 从不可变 publication 加载的固定 batch-16 evaluator、OpenSpiel PUCT 适配和可恢复 MCTS 自博弈采集。
+- trajectory/shard/catalog v3、v2 只读兼容、来源过滤 snapshot 与加权 `MixtureBatchSource`。
 - 合成数据与 64 盘真实 g170 棋谱驱动的 Docker 垂直冒烟测试。
 - 固定到 v1.17.2 的 KataGo CUDA 镜像、Analysis Engine 与 GTP 服务入口。
-- 固定到 v2.0.1 指定提交的 OpenSpiel 源码子模块，作为未来 Python PUCT/MCTS 依赖基线。
+- 固定到 v2.0.1 指定提交的 OpenSpiel 源码，并在开发镜像中从锁定依赖构建 `pyspiel`。
 
-尚未实现：OpenSpiel 状态适配器、MCTS 自博弈、KataGo rich-NPZ 连接、分级教师、在线蒸馏、
-局域网教师和快权重。OpenSpiel 目前不进入运行时镜像，
-KataGo 也不会加载 Zero-TTT checkpoint；路线图中的“目标/未来”不代表现有功能。
+尚未实现：自动 AlphaZero 长期循环、KataGo rich-NPZ 连接、分级教师、在线蒸馏、局域网教师、
+数据窗口和快权重。KataGo 也不会加载 Zero-TTT checkpoint；路线图中的“目标/未来”不代表
+现有功能。
 
 ## 初始化与验证
 
