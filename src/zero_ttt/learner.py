@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 
 import numpy as np
@@ -15,7 +15,7 @@ from zero_ttt.config import ExperimentConfig
 from zero_ttt.data.contracts import BatchSource, TrainBatch
 from zero_ttt.model import BasePolicyValueModel, PolicyValueTransformer
 from zero_ttt.training.checkpoint import CheckpointManager, checkpoint_metadata
-from zero_ttt.training.contracts import CheckpointSummary, LearnerDataIdentity
+from zero_ttt.training.contracts import CheckpointPayload, LearnerDataIdentity
 from zero_ttt.training.ema import update_slow_weights
 from zero_ttt.training.gradients import (
     NonFiniteGradientError,
@@ -55,6 +55,35 @@ class StepMetrics:
     ema_update_seconds: float | None
 
 
+@dataclass(slots=True)
+class StepAccumulator:
+    total_loss: float = 0.0
+    policy_loss: float = 0.0
+    value_loss: float = 0.0
+    ownership_loss: float = 0.0
+    score_loss: float = 0.0
+    hyper_a_saturation: float = 0.0
+    hyper_b_saturation: float = 0.0
+    hyper_dynamic_rms: float = 0.0
+    hyper_static_rms: float = 0.0
+
+    def add(self, losses: Any, diagnostics: Any) -> None:
+        self.total_loss += losses.total.item()
+        self.policy_loss += losses.policy.item()
+        self.value_loss += losses.value.item()
+        self.ownership_loss += losses.ownership.item()
+        self.score_loss += losses.score.item()
+        self.hyper_a_saturation += diagnostics.hyper_a_saturation.item()
+        self.hyper_b_saturation += diagnostics.hyper_b_saturation.item()
+        self.hyper_dynamic_rms += diagnostics.hyper_dynamic_rms.item()
+        self.hyper_static_rms += diagnostics.hyper_static_rms.item()
+
+    def average(self, divisor: int) -> StepAccumulator:
+        return StepAccumulator(
+            **{field.name: getattr(self, field.name) / divisor for field in fields(self)}
+        )
+
+
 def _next_boundary(samples_seen: int, interval: int) -> int:
     return (samples_seen // interval + 1) * interval
 
@@ -72,12 +101,12 @@ class Learner:
         self.config = config
         self.device = torch.device(config.runtime.device)
         self.ema_device = torch.device(config.runtime.ema_device)
-        self.fast = (
-            fast_model or PolicyValueTransformer(config.model, config.execution)
-        ).to(self.device)
-        self.slow = (
-            slow_model or PolicyValueTransformer(config.model, config.execution)
-        ).to(self.ema_device, dtype=torch.float32)
+        self.fast = (fast_model or PolicyValueTransformer(config.model, config.execution)).to(
+            self.device
+        )
+        self.slow = (slow_model or PolicyValueTransformer(config.model, config.execution)).to(
+            self.ema_device, dtype=torch.float32
+        )
         self.slow.load_state_dict(self.fast.state_dict())
         self.slow.eval().requires_grad_(False)
         self.fast.configure_execution(config.execution)
@@ -182,60 +211,70 @@ class Learner:
         next_samples = self.state.samples_seen + effective_batch
         learning_rate = self._set_schedule(next_samples)
         self.optimizer.zero_grad(set_to_none=False)
-        totals = np.zeros(9, dtype=np.float64)
+        totals = StepAccumulator()
         accumulation = self.config.training.accumulation_steps
+        try:
+            for _ in range(accumulation):
+                self._microbatch(source, rng, accumulation, totals)
+        except BaseException:
+            self.optimizer.zero_grad(set_to_none=True)
+            raise
+        gradient_norms = self._commit_optimizer()
+        self.state.optimizer_step = next_step
+        self.state.samples_seen = next_samples
+        self.state.ema_pending_samples += effective_batch
+        ema_update_seconds = self._update_ema_if_due()
+        totals = totals.average(accumulation)
+        return StepMetrics(
+            step=next_step,
+            learning_rate=learning_rate,
+            total_loss=totals.total_loss,
+            policy_loss=totals.policy_loss,
+            value_loss=totals.value_loss,
+            ownership_loss=totals.ownership_loss,
+            score_loss=totals.score_loss,
+            base_gradient_norm=gradient_norms.base,
+            hypernet_gradient_norm=gradient_norms.hypernet,
+            hyper_a_saturation=totals.hyper_a_saturation,
+            hyper_b_saturation=totals.hyper_b_saturation,
+            hyper_dynamic_rms=totals.hyper_dynamic_rms,
+            hyper_static_rms=totals.hyper_static_rms,
+            ema_update_seconds=ema_update_seconds,
+        )
+
+    def _microbatch(
+        self,
+        source: BatchSource,
+        rng: np.random.Generator,
+        accumulation: int,
+        totals: StepAccumulator,
+    ) -> None:
+        batch = source.next_batch(self.config.training.batch_size, rng)
+        tensors = self._tensor_batch(batch)
+        board, global_features, legal = tensors[:3]
+        targets = TrainingTargets(
+            policy=tensors[3],
+            value=tensors[4],
+            ownership=tensors[5],
+            score_margin=tensors[6],
+            value_mask=tensors[7],
+            ownership_mask=tensors[8],
+            score_mask=tensors[9],
+        )
         autocast = (
             torch.autocast(device_type="cuda", dtype=torch.bfloat16)
             if self.device.type == "cuda"
             else torch.autocast(device_type="cpu", enabled=False)
         )
-        try:
-            for _ in range(accumulation):
-                batch = source.next_batch(self.config.training.batch_size, rng)
-                (
-                    board,
-                    global_features,
-                    legal,
-                    policy,
-                    value,
-                    ownership,
-                    score_margin,
-                    value_mask,
-                    ownership_mask,
-                    score_mask,
-                ) = self._tensor_batch(batch)
-                targets = TrainingTargets(
-                    policy=policy,
-                    value=value,
-                    ownership=ownership,
-                    score_margin=score_margin,
-                    value_mask=value_mask,
-                    ownership_mask=ownership_mask,
-                    score_mask=score_mask,
-                )
-                with autocast:
-                    output = self.fast(board, global_features, legal)
-                    losses = compute_losses(output, targets, self.config.training)
-                if not torch.isfinite(losses.total):
-                    self._fault("non-finite training loss")
-                (losses.total / accumulation).backward()
-                totals += np.asarray(
-                    [
-                        losses.total.item(),
-                        losses.policy.item(),
-                        losses.value.item(),
-                        losses.ownership.item(),
-                        losses.score.item(),
-                        output.diagnostics.hyper_a_saturation.item(),
-                        output.diagnostics.hyper_b_saturation.item(),
-                        output.diagnostics.hyper_dynamic_rms.item(),
-                        output.diagnostics.hyper_static_rms.item(),
-                    ]
-                )
-        except BaseException:
-            self.optimizer.zero_grad(set_to_none=True)
-            raise
+        with autocast:
+            output = self.fast(board, global_features, legal)
+            losses = compute_losses(output, targets, self.config.training)
+        if not torch.isfinite(losses.total):
+            self._fault("non-finite training loss")
+        (losses.total / accumulation).backward()
+        totals.add(losses, output.diagnostics)
 
+    def _commit_optimizer(self):
         try:
             gradient_norms = clip_model_gradients(
                 self._parameter_groups,
@@ -247,42 +286,25 @@ class Learner:
         self.optimizer.step()
         if not parameters_are_finite(self.fast.parameters()):
             self._fault("non-finite model parameter after optimizer step")
+        return gradient_norms
 
-        self.state.optimizer_step = next_step
-        self.state.samples_seen = next_samples
-        self.state.ema_pending_samples += effective_batch
-        ema_update_seconds: float | None = None
-        if self.state.samples_seen >= self.state.next_ema_sample:
-            ema_started = time.perf_counter()
-            update_slow_weights(
-                self.slow,
-                self.fast,
-                self.state.ema_pending_samples,
-                self.config.training.ema_half_life_samples,
-            )
-            ema_update_seconds = time.perf_counter() - ema_started
-            self.state.ema_pending_samples = 0
-            self.state.next_ema_sample = _next_boundary(
-                self.state.samples_seen,
-                self.config.training.ema_update_interval_samples,
-            )
-        totals /= accumulation
-        return StepMetrics(
-            step=next_step,
-            learning_rate=learning_rate,
-            total_loss=float(totals[0]),
-            policy_loss=float(totals[1]),
-            value_loss=float(totals[2]),
-            ownership_loss=float(totals[3]),
-            score_loss=float(totals[4]),
-            base_gradient_norm=gradient_norms.base,
-            hypernet_gradient_norm=gradient_norms.hypernet,
-            hyper_a_saturation=float(totals[5]),
-            hyper_b_saturation=float(totals[6]),
-            hyper_dynamic_rms=float(totals[7]),
-            hyper_static_rms=float(totals[8]),
-            ema_update_seconds=ema_update_seconds,
+    def _update_ema_if_due(self) -> float | None:
+        if self.state.samples_seen < self.state.next_ema_sample:
+            return None
+        started = time.perf_counter()
+        update_slow_weights(
+            self.slow,
+            self.fast,
+            self.state.ema_pending_samples,
+            self.config.training.ema_half_life_samples,
         )
+        elapsed = time.perf_counter() - started
+        self.state.ema_pending_samples = 0
+        self.state.next_ema_sample = _next_boundary(
+            self.state.samples_seen,
+            self.config.training.ema_update_interval_samples,
+        )
+        return elapsed
 
     def train_steps(
         self,
@@ -298,24 +320,19 @@ class Learner:
     def publication_due(self) -> bool:
         return self.state.samples_seen >= self.state.next_publish_sample
 
-    def checkpoint_payload(
-        self, rng: np.random.Generator | None = None
-    ) -> dict[str, Any]:
-        return {
-            **checkpoint_metadata(self.config.canonical_json(), self.config.sha256),
-            "learner_state": asdict(self.state),
-            "data_identity": None
-            if self.data_identity is None
-            else asdict(self.data_identity),
-            "fast_state": self.fast.state_dict(),
-            "slow_state": self.slow.state_dict(),
-            "optimizer_state": self.optimizer.state_dict(),
-            "torch_rng_state": torch.get_rng_state(),
-            "cuda_rng_state": torch.cuda.get_rng_state_all()
-            if torch.cuda.is_available()
-            else None,
-            "numpy_rng_state": None if rng is None else rng.bit_generator.state,
-        }
+    def checkpoint_payload(self, rng: np.random.Generator | None = None) -> dict[str, Any]:
+        return CheckpointPayload.build(
+            config_json=self.config.canonical_json(),
+            config_sha256=self.config.sha256,
+            learner_state=asdict(self.state),
+            data_identity=self.data_identity,
+            fast_state=self.fast.state_dict(),
+            slow_state=self.slow.state_dict(),
+            optimizer_state=self.optimizer.state_dict(),
+            torch_rng_state=torch.get_rng_state(),
+            cuda_rng_state=(torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None),
+            numpy_rng_state=None if rng is None else rng.bit_generator.state,
+        ).to_payload()
 
     def save_checkpoint(self, rng: np.random.Generator | None = None):
         return self.checkpoints.save_full(
@@ -356,28 +373,27 @@ class Learner:
             or payload.get("config_json") != self.config.canonical_json()
         ):
             raise ValueError("checkpoint configuration does not match this run")
-        summary = CheckpointSummary.from_payload(payload)
+        checkpoint = CheckpointPayload.from_payload(payload)
+        summary = checkpoint.summary
         stored_identity = summary.data_identity
         expected_identity = self.data_identity
         if not allow_data_transition and stored_identity != expected_identity:
-            raise ValueError(
-                "checkpoint data snapshot or sampling configuration does not match"
-            )
+            raise ValueError("checkpoint data snapshot or sampling configuration does not match")
         if allow_data_transition:
             if stored_identity is None or expected_identity is None:
                 raise ValueError("data transition requires old and new data identities")
             if stored_identity == expected_identity:
                 raise ValueError("data transition requires a different data identity")
         state = summary.learner_state
-        self.fast.load_state_dict(payload["fast_state"])
-        self.slow.load_state_dict(payload["slow_state"])
-        self.optimizer.load_state_dict(payload["optimizer_state"])
+        self.fast.load_state_dict(checkpoint.fast_state)
+        self.slow.load_state_dict(checkpoint.slow_state)
+        self.optimizer.load_state_dict(checkpoint.optimizer_state)
         self.state = LearnerState(**state)
-        torch.set_rng_state(payload["torch_rng_state"].cpu())
-        if torch.cuda.is_available() and payload["cuda_rng_state"] is not None:
-            torch.cuda.set_rng_state_all(payload["cuda_rng_state"])
-        if rng is not None and payload["numpy_rng_state"] is not None:
-            rng.bit_generator.state = payload["numpy_rng_state"]
+        torch.set_rng_state(checkpoint.torch_rng_state.cpu())
+        if torch.cuda.is_available() and checkpoint.cuda_rng_state is not None:
+            torch.cuda.set_rng_state_all(checkpoint.cuda_rng_state)
+        if rng is not None and checkpoint.numpy_rng_state is not None:
+            rng.bit_generator.state = checkpoint.numpy_rng_state
         return stored_identity
 
     def restore(self, path, rng: np.random.Generator | None = None) -> None:

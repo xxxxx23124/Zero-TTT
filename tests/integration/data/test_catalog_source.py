@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 from zero_ttt.data.catalog import Catalog, TrajectoryLocator
-from zero_ttt.data.catalog_source import CatalogBatchSource, SnapshotPositionIndex
+from zero_ttt.data.catalog_source import (
+    CatalogBatchSource,
+    SnapshotPositionIndex,
+    TrajectoryBatchMaterializer,
+)
 from zero_ttt.data.manifest import ManifestAsset
 from zero_ttt.data.records import AnnotationRecord
 from zero_ttt.data.shards import ShardStore
@@ -26,13 +30,8 @@ def test_shard_local_sampling_is_position_weighted_and_deterministic() -> None:
     assert [draw[0].trajectory.game_id for draw in first_draws] == [
         draw[0].trajectory.game_id for draw in second_draws
     ]
-    assert all(
-        len({ref.trajectory.shard_sha256 for ref in draw}) == 1
-        for draw in first_draws
-    )
-    small_fraction = (
-        sum(draw[0].trajectory.game_id == small.game_id for draw in first_draws) / 4000
-    )
+    assert all(len({ref.trajectory.shard_sha256 for ref in draw}) == 1 for draw in first_draws)
+    small_fraction = sum(draw[0].trajectory.game_id == small.game_id for draw in first_draws) / 4000
     assert small_fraction == pytest.approx(0.25, abs=0.03)
 
 
@@ -122,3 +121,36 @@ def test_annotation_shards_are_loaded_at_most_once_per_microbatch(
         source.next_batch(64, np.random.default_rng(2))
     assert calls
     assert len(calls) == len(set(calls))
+
+
+def test_multiple_positions_from_one_game_are_replayed_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    trajectory_factory,
+    manifest_factory,
+) -> None:
+    record = trajectory_factory()
+    store = ShardStore(tmp_path / "processed")
+    asset = ManifestAsset("source.zip", record.asset_sha256, 1)
+    with Catalog(tmp_path / "catalog.sqlite", store) as catalog:
+        catalog.register_asset(manifest_factory(asset), asset)
+        info = store.write_trajectories([record])
+        catalog.commit_trajectory_shard(info, [record])
+        snapshot_id = catalog.create_snapshot(seed=4, validation_fraction=0.0)
+
+    calls = 0
+    original = TrajectoryBatchMaterializer._initial_state
+
+    def counting_initial_state(sample):
+        nonlocal calls
+        calls += 1
+        return original(sample)
+
+    monkeypatch.setattr(
+        TrajectoryBatchMaterializer,
+        "_initial_state",
+        staticmethod(counting_initial_state),
+    )
+    with CatalogBatchSource(tmp_path / "catalog.sqlite", store.root, snapshot_id) as source:
+        source.next_batch(32, np.random.default_rng(9))
+    assert calls == 1

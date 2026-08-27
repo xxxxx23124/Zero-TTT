@@ -58,9 +58,7 @@ class SharedDynamicLowRank(BlockResidualPlugin):
         batch = hidden.shape[0]
         context = scale_gradient(context, self.context_gradient_scale)
         encoded = self.context_projection(self.context_norm(context))
-        layer = torch.matmul(layer_selector, self.layer_embedding.weight).to(
-            dtype=encoded.dtype
-        )
+        layer = torch.matmul(layer_selector, self.layer_embedding.weight).to(dtype=encoded.dtype)
         encoded = F.silu(encoded + layer)
         raw_a = torch.tanh(self.a_head(encoded))
         raw_b = torch.tanh(self.b_head(encoded))

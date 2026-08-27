@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import sqlite3
+import time
 from pathlib import Path
 
 import numpy as np
@@ -89,9 +91,11 @@ def test_pickle_object_shards_are_rejected(tmp_path: Path) -> None:
         kind=np.asarray(1, dtype=np.uint8),
         bad=np.asarray([object()], dtype=object),
     )
-    with pytest.raises(ValueError, match="Object arrays cannot be loaded|forbidden"):
-        with ShardStore._open_validated(path):
-            pass
+    with (
+        pytest.raises(ValueError, match=r"Object arrays cannot be loaded|forbidden"),
+        ShardStore._open_validated(path),
+    ):
+        pass
 
 
 @pytest.mark.parametrize("dtype", (np.int32, np.int64))
@@ -141,9 +145,8 @@ def test_shard_schemas_require_exact_integer_scalars(
     arrays[field] = invalid
     path = tmp_path / "invalid-schema.npz"
     np.savez(path, **arrays)
-    with pytest.raises(ValueError, match=message):
-        with ShardStore._open_validated(path):
-            pass
+    with pytest.raises(ValueError, match=message), ShardStore._open_validated(path):
+        pass
 
 
 def test_catalog_detects_corrupt_registered_shard(
@@ -162,9 +165,63 @@ def test_catalog_detects_corrupt_registered_shard(
     path = store.resolve(info.relative_path)
     with path.open("ab") as handle:
         handle.write(b"corruption")
+    with Catalog(catalog_path, store) as catalog, pytest.raises(ValueError, match="SHA-256"):
+        catalog.verify()
+
+
+def test_recover_preserves_live_temporary_files_and_removes_stale_ones(
+    tmp_path: Path,
+) -> None:
+    store = ShardStore(tmp_path / "processed")
+    live = store.trajectory_dir / ".shard-live.tmp"
+    stale = store.trajectory_dir / ".shard-stale.tmp"
+    live.write_bytes(b"live")
+    stale.write_bytes(b"stale")
+    old = time.time() - 25 * 60 * 60
+    os.utime(stale, (old, old))
+
+    with Catalog(tmp_path / "catalog.sqlite", store) as catalog:
+        assert catalog.recover() == ()
+    assert live.is_file()
+    assert not stale.exists()
+
+
+def test_gc_tombstone_is_recovered_after_file_delete_interruption(
+    tmp_path: Path,
+    trajectory_factory,
+    manifest_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ShardStore(tmp_path / "processed")
+    catalog_path = tmp_path / "catalog.sqlite"
+    record = trajectory_factory()
+    asset = ManifestAsset("source.zip", record.asset_sha256, 1)
+    info = store.write_trajectories([record])
+    shard_path = store.resolve(info.relative_path)
+    original_unlink = Path.unlink
+
+    def interrupted_unlink(path: Path, *args, **kwargs):
+        if path == shard_path:
+            raise OSError("injected unlink interruption")
+        return original_unlink(path, *args, **kwargs)
+
     with Catalog(catalog_path, store) as catalog:
-        with pytest.raises(ValueError, match="SHA-256"):
-            catalog.verify()
+        catalog.register_asset(manifest_factory(asset), asset)
+        catalog.commit_trajectory_shard(info, [record])
+        catalog.mark_trajectory_deleted(record.game_id)
+        monkeypatch.setattr(Path, "unlink", interrupted_unlink)
+        with pytest.raises(OSError, match="interruption"):
+            catalog.garbage_collect()
+        deleted = catalog.connection.execute(
+            "SELECT deleted FROM shards WHERE shard_sha256=?", (info.sha256,)
+        ).fetchone()["deleted"]
+        assert deleted == 1
+        assert shard_path.is_file()
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    with Catalog(catalog_path, store) as catalog:
+        assert catalog.recover() == ()
+    assert not shard_path.exists()
 
 
 def snapshot_for_records(
@@ -200,12 +257,8 @@ def test_snapshot_identity_uses_logical_content_not_shard_packing(
         content_sha256="",
         ordinal=1,
     )
-    packed = snapshot_for_records(
-        tmp_path / "packed", [first, second], True, manifest_factory
-    )
-    split = snapshot_for_records(
-        tmp_path / "split", [first, second], False, manifest_factory
-    )
+    packed = snapshot_for_records(tmp_path / "packed", [first, second], True, manifest_factory)
+    split = snapshot_for_records(tmp_path / "split", [first, second], False, manifest_factory)
     assert packed == split
 
     changed = dataclasses.replace(first, content_sha256="", value_black=-1.0)
@@ -263,14 +316,10 @@ def test_snapshot_membership_is_built_inside_an_immediate_transaction(
         catalog.create_snapshot(seed=6, validation_fraction=0.0)
     begin = next(index for index, sql in enumerate(statements) if "BEGIN IMMEDIATE" in sql)
     selection = next(
-        index
-        for index, sql in enumerate(statements)
-        if "FROM trajectories WHERE deleted=0" in sql
+        index for index, sql in enumerate(statements) if "FROM trajectories WHERE deleted=0" in sql
     )
     membership = next(
-        index
-        for index, sql in enumerate(statements)
-        if "INSERT INTO snapshot_trajectories" in sql
+        index for index, sql in enumerate(statements) if "INSERT INTO snapshot_trajectories" in sql
     )
     commit = next(index for index, sql in enumerate(statements) if sql.strip() == "COMMIT")
     assert begin < selection < membership < commit
@@ -313,9 +362,11 @@ def test_previous_records_and_shards_are_rejected(
         record_schema_version=np.asarray(3, dtype=np.int32),
         kind=np.asarray(1, dtype=np.uint8),
     )
-    with pytest.raises(ValueError, match=r"NPZ shard.*expected v4.*rebuild"):
-        with ShardStore._open_validated(path):
-            pass
+    with (
+        pytest.raises(ValueError, match=r"NPZ shard.*expected v4.*rebuild"),
+        ShardStore._open_validated(path),
+    ):
+        pass
 
 
 def test_new_catalog_records_only_the_current_schema(tmp_path: Path) -> None:

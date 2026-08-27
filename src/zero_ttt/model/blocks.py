@@ -132,7 +132,7 @@ class TransformerBackbone(nn.Module):
             config.rope,
             config.d_model // config.n_heads,
             layout,
-            board_size=int(math.isqrt(layout.board_tokens)),
+            board_size=math.isqrt(layout.board_tokens),
         )
         plugin_start = config.n_layers - config.hypernet.num_layers
         residual_std = 0.02 / math.sqrt(2 * config.n_layers)

@@ -193,9 +193,7 @@ def test_cold_train_warm_start_and_restart_status(tmp_path: Path) -> None:
     assert console.state.phase is TrainingPhase.MIXTURE
     assert console.state.migrations[-1].reason == "warm_start"
 
-    restarted = TrainingConsole(
-        settings, clock=OneStepClock(), output=lambda _line: None
-    )
+    restarted = TrainingConsole(settings, clock=OneStepClock(), output=lambda _line: None)
     restarted.reconcile()
     assert restarted.state.phase is TrainingPhase.MIXTURE
     assert restarted.status().optimizer_step == 2
@@ -291,9 +289,7 @@ def test_reconcile_replaces_same_step_publication_from_another_run(
     assert publication is not None
     payload = console.manager.load_publication(publication)
     assert payload["run_id"] == "run-b"
-    assert console.status().artifact_consistency == (
-        "checkpoint and publication aligned"
-    )
+    assert console.status().artifact_consistency == ("checkpoint and publication aligned")
 
 
 def test_publication_only_reconcile_accepts_matching_config(tmp_path: Path) -> None:
@@ -313,9 +309,7 @@ def test_publication_only_reconcile_accepts_matching_config(tmp_path: Path) -> N
     status = console.status()
     assert status.checkpoint_path is None
     assert status.publication_path == publication
-    assert status.artifact_consistency == (
-        "publication exists without resumable checkpoint"
-    )
+    assert status.artifact_consistency == ("publication exists without resumable checkpoint")
 
 
 @pytest.mark.parametrize(

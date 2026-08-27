@@ -7,15 +7,17 @@
 | 组件 | 唯一职责 |
 | --- | --- |
 | `model` | 定义纯 `nn.Module`、前向输出和可关闭的模型实验 |
-| `learner` | 监督优化、EMA、compile、梯度、checkpoint 和 publication |
+| `learner` | 监督优化、EMA、compile 与梯度提交 |
+| `training` application service | learner 生命周期、checkpoint、publication 与 catalog 登记 |
 | `inference` | 从不可变 publication 构造只读 `PositionEvaluator` |
 | `data` | trajectory/annotation 校验、混合和 `BatchSource` |
 | OpenSpiel adapter | 把本地棋局和 evaluator 接到 Python MCTS |
 | 采集流程 | 棋谱导入、MCTS 自博弈、KataGo 标注和课程调度 |
 | KataGo adapter | JSON/坐标/视角与 annotation 之间的转换 |
 
-`Learner` 是小型门面，不包含游戏、搜索、网络协议或调度。它负责训练
-若干 step、保存、恢复和发布；输入仍只有 `BatchSource`/`TrainBatch`。采集器不得持有训练
+`Learner` 不包含游戏、搜索、网络协议或调度；输入仍只有 `BatchSource`/`TrainBatch`。
+`TrainingSession` 统一 CLI 和控制台中的 learner 创建、恢复、step、checkpoint 与 publication。
+`SelfPlayService` 统一 publication evaluator 身份、broker 生命周期和 collector 初始化。采集器不得持有训练
 模型、优化器或 EMA 的 Python 引用。
 
 ## 数据交接
@@ -51,6 +53,7 @@ microbatch 16 跑到峰值 `14.246 GiB reserved`；生产配置把梯度累积�
 
 Docker 控制台位于独立 `zero_ttt.console` 包中；底层模块不导入它。普通 checkpoint restore
 继续严格绑定数据身份，只有控制台显式滚动不可变 snapshot 时才调用保留完整训练状态的数据
-迁移入口。共享的训练产物契约负责 checkpoint/publication 身份解析；console artifact
-coordinator 负责幂等恢复与登记，training-data planner 负责 cold/mixture 数据计划。控制台的
+迁移入口。共享的训练产物契约负责 checkpoint/publication 身份解析；`training.artifacts`
+中的 coordinator 负责幂等恢复与登记（旧 `console.artifacts` 仅兼容重导出），training-data
+planner 负责 cold/mixture 数据计划。控制台的
 JSON 状态用于菜单与审计，checkpoint、catalog 和不可变产物仍是事实源。

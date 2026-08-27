@@ -43,15 +43,11 @@ def test_accumulated_and_single_batch_updates_match(tmp_path: Path) -> None:
     config = load_config("configs/test.toml")
     large_config = dataclasses.replace(
         config,
-        training=dataclasses.replace(
-            config.training, batch_size=4, accumulation_steps=1
-        ),
+        training=dataclasses.replace(config.training, batch_size=4, accumulation_steps=1),
     )
     accumulated_config = dataclasses.replace(
         config,
-        training=dataclasses.replace(
-            config.training, batch_size=2, accumulation_steps=2
-        ),
+        training=dataclasses.replace(config.training, batch_size=2, accumulation_steps=2),
     )
     large_model = PolicyValueTransformer(large_config.model, large_config.execution)
     accumulated_model = PolicyValueTransformer(
@@ -70,7 +66,7 @@ def test_accumulated_and_single_batch_updates_match(tmp_path: Path) -> None:
     )
     large.train_optimizer_step(SyntheticBatchSource(), np.random.default_rng(5))
     accumulated.train_optimizer_step(SyntheticBatchSource(), np.random.default_rng(5))
-    for left, right in zip(large.fast.parameters(), accumulated.fast.parameters()):
+    for left, right in zip(large.fast.parameters(), accumulated.fast.parameters(), strict=False):
         assert torch.allclose(left, right, atol=2e-6, rtol=2e-5)
 
 
@@ -103,9 +99,7 @@ def test_explicit_data_transition_preserves_full_training_state(tmp_path: Path) 
     first.train_optimizer_step(source, first_rng)
     path = first.save_checkpoint(first_rng)
     expected_state = dataclasses.asdict(first.state)
-    expected_parameters = [
-        parameter.detach().clone() for parameter in first.fast.parameters()
-    ]
+    expected_parameters = [parameter.detach().clone() for parameter in first.fast.parameters()]
     expected_optimizer = first.optimizer.state_dict()
 
     destination_identity = LearnerDataIdentity(
@@ -120,21 +114,16 @@ def test_explicit_data_transition_preserves_full_training_state(tmp_path: Path) 
 
     assert previous == first_identity
     assert dataclasses.asdict(second.state) == expected_state
-    for actual, expected in zip(second.fast.parameters(), expected_parameters):
+    for actual, expected in zip(second.fast.parameters(), expected_parameters, strict=False):
         assert torch.equal(actual, expected)
-    assert (
-        second.optimizer.state_dict()["param_groups"]
-        == expected_optimizer["param_groups"]
-    )
+    assert second.optimizer.state_dict()["param_groups"] == expected_optimizer["param_groups"]
     assert second_rng.bit_generator.state == first_rng.bit_generator.state
     transitioned = second.checkpoint_payload(second_rng)
     assert transitioned["data_identity"] == dataclasses.asdict(destination_identity)
 
 
 @pytest.mark.parametrize("missing", ("data_identity", "learner_state", "state_field"))
-def test_checkpoint_requires_complete_current_state(
-    tmp_path: Path, missing: str
-) -> None:
+def test_checkpoint_requires_complete_current_state(tmp_path: Path, missing: str) -> None:
     config = load_config("configs/test.toml")
     manager = CheckpointManager(tmp_path, keep=2)
     learner = Learner(config, manager)
@@ -145,15 +134,11 @@ def test_checkpoint_requires_complete_current_state(
         payload.pop(missing)
     path = tmp_path / f"missing-{missing}.pt"
     torch.save(payload, path)
-    with pytest.raises(
-        ValueError, match=r"checkpoint .* (identity|state) is incomplete"
-    ):
+    with pytest.raises(ValueError, match=r"checkpoint .* (identity|state) is incomplete"):
         learner.restore(path, np.random.default_rng(2))
 
 
-def test_publication_failure_does_not_advance_state(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_publication_failure_does_not_advance_state(tmp_path: Path, monkeypatch) -> None:
     config = load_config("configs/test.toml")
     manager = CheckpointManager(tmp_path, keep=1)
     learner = Learner(config, manager)

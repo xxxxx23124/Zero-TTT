@@ -112,12 +112,8 @@ def test_malformed_typed_sgf_properties_are_rejected_without_stopping(
         archive.writestr("games.sgfs", b"\n".join((*malformed, valid_sgf)))
     payload = archive_path.read_bytes()
     asset = ManifestAsset("source.zip", hashlib.sha256(payload).hexdigest(), len(payload))
-    events = list(
-        KataGoSgfImporter().import_asset(manifest_factory(asset), asset, tmp_path)
-    )
-    assert [event.kind for event in events] == ["reject"] * len(malformed) + [
-        "trajectory"
-    ]
+    events = list(KataGoSgfImporter().import_asset(manifest_factory(asset), asset, tmp_path))
+    assert [event.kind for event in events] == ["reject"] * len(malformed) + ["trajectory"]
     assert all(
         event.reason_code in {"invalid_sgf", "invalid_move", "unsupported_result"}
         for event in events[:-1]

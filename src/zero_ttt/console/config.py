@@ -63,7 +63,7 @@ def load_console_config(path: str | Path = DEFAULT_CONSOLE_CONFIG) -> ConsoleCon
             "console.cold_start_snapshot_id must be an existing lowercase SHA-256 snapshot ID"
         )
     hours = raw["max_runtime_hours"]
-    if isinstance(hours, bool) or not isinstance(hours, (int, float)):
+    if isinstance(hours, bool) or not isinstance(hours, int | float):
         raise TypeError("console.max_runtime_hours must be numeric")
     hours = float(hours)
     if not math.isfinite(hours) or hours <= 0:
@@ -71,9 +71,7 @@ def load_console_config(path: str | Path = DEFAULT_CONSOLE_CONFIG) -> ConsoleCon
     parent = config_path.resolve().parent
     return ConsoleConfig(
         schema_version=CONSOLE_CONFIG_SCHEMA.current,
-        experiment_config=_configured_path(
-            raw["experiment_config"], "experiment_config", parent
-        ),
+        experiment_config=_configured_path(raw["experiment_config"], "experiment_config", parent),
         catalog_path=_configured_path(raw["catalog_path"], "catalog_path", parent),
         store_root=_configured_path(raw["store_root"], "store_root", parent),
         cold_start_snapshot_id=snapshot_id,

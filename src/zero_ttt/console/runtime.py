@@ -6,12 +6,11 @@ import signal
 import threading
 import time
 from collections.abc import Callable
+from typing import Any
 
 
 class RuntimeBudget:
-    def __init__(
-        self, seconds: float, clock: Callable[[], float] = time.monotonic
-    ) -> None:
+    def __init__(self, seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self.deadline = clock() + seconds
 
@@ -23,7 +22,7 @@ class RuntimeBudget:
 class SoftStopSignals:
     def __init__(self) -> None:
         self._requested = threading.Event()
-        self._previous: dict[signal.Signals, object] = {}
+        self._previous: dict[signal.Signals, Any] = {}
 
     @property
     def requested(self) -> bool:
@@ -32,7 +31,7 @@ class SoftStopSignals:
     def request(self) -> None:
         self._requested.set()
 
-    def __enter__(self) -> "SoftStopSignals":
+    def __enter__(self) -> SoftStopSignals:
         if threading.current_thread() is not threading.main_thread():
             return self
 

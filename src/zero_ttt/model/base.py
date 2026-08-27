@@ -60,9 +60,7 @@ class BasePolicyValueModel(nn.Module, ABC):
             raise TypeError("board_features and global_features must have the same dtype")
         if legal_mask.dtype != torch.bool:
             raise TypeError("legal_mask must have boolean dtype")
-        if not (
-            board_features.device == global_features.device == legal_mask.device
-        ):
+        if not (board_features.device == global_features.device == legal_mask.device):
             raise ValueError("all model inputs must be on the same device")
 
     @final

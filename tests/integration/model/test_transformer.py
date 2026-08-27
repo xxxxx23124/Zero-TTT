@@ -167,11 +167,9 @@ def test_shared_hypernet_and_dwa_start_as_exact_baseline_and_receive_gradient() 
     assert torch.equal(expected.policy_logits, actual.policy_logits)
     assert torch.equal(expected.value, actual.value)
     assert sum(block.plugin_enabled for block in model.backbone.blocks) == 1
-    assert [
-        index
-        for index, block in enumerate(model.backbone.blocks)
-        if block.plugin_enabled
-    ] == [1]
+    assert [index for index, block in enumerate(model.backbone.blocks) if block.plugin_enabled] == [
+        1
+    ]
     assert actual.diagnostics.hyper_dynamic_rms.item() == 0.0
     (actual.policy_logits.sum() + actual.ownership.sum()).backward()
     assert model.block_plugin.b_head.weight.grad is not None

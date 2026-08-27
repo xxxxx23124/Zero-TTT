@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import torch
 
@@ -27,8 +27,7 @@ def parameters_are_finite(parameters: Iterable[torch.Tensor]) -> bool:
     """Check parameters without allocating full-size boolean temporaries."""
 
     infinity_norms = [
-        torch.linalg.vector_norm(parameter.detach(), ord=math.inf)
-        for parameter in parameters
+        torch.linalg.vector_norm(parameter.detach(), ord=math.inf) for parameter in parameters
     ]
     if not infinity_norms:
         return True
@@ -36,9 +35,7 @@ def parameters_are_finite(parameters: Iterable[torch.Tensor]) -> bool:
 
 
 def _clip_group(group: ModelParameterGroup, max_norm: float) -> float:
-    parameters = tuple(
-        parameter for parameter in group.parameters if parameter.grad is not None
-    )
+    parameters = tuple(parameter for parameter in group.parameters if parameter.grad is not None)
     if not parameters:
         return 0.0
     norm = torch.nn.utils.clip_grad_norm_(parameters, max_norm)
@@ -63,8 +60,6 @@ def clip_model_gradients(
         raise ValueError(f"no gradient policy for groups: {', '.join(sorted(unknown))}")
     base_norm = _clip_group(by_name["base"], base_max_norm)
     hypernet_norm = (
-        _clip_group(by_name["hypernet"], hypernet_max_norm)
-        if "hypernet" in by_name
-        else None
+        _clip_group(by_name["hypernet"], hypernet_max_norm) if "hypernet" in by_name else None
     )
     return GradientNorms(base=base_norm, hypernet=hypernet_norm)

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from functools import lru_cache
-from typing import Collection, Sequence
-
 
 BOARD_SIZE = 19
 BOARD_AREA = BOARD_SIZE * BOARD_SIZE
@@ -21,7 +20,7 @@ class Color(IntEnum):
     WHITE = 2
 
     @property
-    def opponent(self) -> "Color":
+    def opponent(self) -> Color:
         return Color.WHITE if self is Color.BLACK else Color.BLACK
 
 
@@ -162,6 +161,38 @@ class AreaScore:
         return None
 
 
+def _empty_region(board: bytes, start: int, visited: set[int]) -> tuple[set[int], set[int]]:
+    region = {start}
+    borders: set[int] = set()
+    stack = [start]
+    visited.add(start)
+    while stack:
+        point = stack.pop()
+        for adjacent in NEIGHBORS[point]:
+            neighbor = board[adjacent]
+            if neighbor == EMPTY and adjacent not in visited:
+                visited.add(adjacent)
+                region.add(adjacent)
+                stack.append(adjacent)
+            elif neighbor != EMPTY:
+                borders.add(neighbor)
+    return region, borders
+
+
+def _claim_region(region: set[int], borders: set[int], ownership: bytearray) -> tuple[int, int]:
+    if borders == {int(Color.BLACK)}:
+        owner = 1
+        area = (len(region), 0)
+    elif borders == {int(Color.WHITE)}:
+        owner = 255
+        area = (0, len(region))
+    else:
+        return 0, 0
+    for point in region:
+        ownership[point] = owner
+    return area
+
+
 def area_score(board: bytes, komi_half_points: int) -> AreaScore:
     """Score stones and single-color reachable empty regions."""
 
@@ -179,28 +210,9 @@ def area_score(board: bytes, komi_half_points: int) -> AreaScore:
     for start, value in enumerate(board):
         if value != EMPTY or start in visited:
             continue
-        region = {start}
-        borders: set[int] = set()
-        stack = [start]
-        visited.add(start)
-        while stack:
-            point = stack.pop()
-            for adjacent in NEIGHBORS[point]:
-                neighbor = board[adjacent]
-                if neighbor == EMPTY and adjacent not in visited:
-                    visited.add(adjacent)
-                    region.add(adjacent)
-                    stack.append(adjacent)
-                elif neighbor != EMPTY:
-                    borders.add(neighbor)
-        if borders == {int(Color.BLACK)}:
-            black_area += len(region)
-            for point in region:
-                ownership[point] = 1
-        elif borders == {int(Color.WHITE)}:
-            white_area += len(region)
-            for point in region:
-                ownership[point] = 255
+        black, white = _claim_region(*_empty_region(board, start, visited), ownership)
+        black_area += black
+        white_area += white
     black_half = 2 * black_area
     white_half = 2 * white_area + komi_half_points
     return AreaScore(

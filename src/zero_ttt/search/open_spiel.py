@@ -1,5 +1,8 @@
 """Thin local-GameState adapter for OpenSpiel's Python PUCT implementation."""
 
+# Native bindings are built in the Docker runtime.
+# pyright: reportMissingImports=false
+
 from __future__ import annotations
 
 import importlib.metadata
@@ -12,10 +15,9 @@ import pyspiel
 from open_spiel.python.algorithms import mcts
 
 from zero_ttt.config import GameConfig, SearchConfig
-from zero_ttt.game.rules import ACTION_SIZE, BOARD_AREA, BOARD_SIZE, PASS_ACTION, Color
+from zero_ttt.game.rules import ACTION_SIZE, BOARD_SIZE, PASS_ACTION, Color
 from zero_ttt.game.state import GameResult, GameState
 from zero_ttt.inference.batching import BatchedInferenceBroker, StateEvaluation
-
 
 OPEN_SPIEL_VERSION = "2.0.1"
 OPEN_SPIEL_REVISION = "112b77704631fc2ce7ad8e4581f6ca09798ce15a"
@@ -65,7 +67,7 @@ class OpenSpielGoGame(pyspiel.Game):
         )
         super().__init__(_GAME_TYPE, info, {})
 
-    def new_initial_state(self) -> "OpenSpielGoState":
+    def new_initial_state(self) -> OpenSpielGoState:
         return OpenSpielGoState(self, GameState.new(self.config))
 
 
@@ -76,7 +78,7 @@ class OpenSpielGoState(pyspiel.State):
         self.local_state = local_state
         self._legal_cache: tuple[int, ...] | None = None
 
-    def clone(self) -> "OpenSpielGoState":
+    def clone(self) -> OpenSpielGoState:
         clone = OpenSpielGoState(self._game, self.local_state)
         clone._legal_cache = self._legal_cache
         return clone
@@ -93,9 +95,7 @@ class OpenSpielGoState(pyspiel.State):
         if self._legal_cache is None:
             started = time.perf_counter()
             self._legal_cache = tuple(
-                action
-                for action, legal in enumerate(self.local_state.legal_actions())
-                if legal
+                action for action, legal in enumerate(self.local_state.legal_actions()) if legal
             )
             self._game.rules_seconds += time.perf_counter() - started
         return list(self._legal_cache)
@@ -164,8 +164,7 @@ class OpenSpielEvaluator(mcts.Evaluator):
             raise FloatingPointError("model produced an invalid legal policy")
         masses /= total
         return [
-            (int(action), float(mass))
-            for action, mass in zip(legal_actions, masses, strict=True)
+            (int(action), float(mass)) for action, mass in zip(legal_actions, masses, strict=True)
         ]
 
     def evaluate(self, state: pyspiel.State) -> np.ndarray:
@@ -186,6 +185,21 @@ class MCTSSearchResult:
     root_score_available: bool
     temperature: float
     search_seed: int
+
+
+def _select_action(
+    visits: np.ndarray,
+    move_number: int,
+    config: SearchConfig,
+    selection_seed: int,
+) -> tuple[int, float]:
+    temperature = config.temperature if move_number < config.temperature_drop_ply else 0.0
+    if temperature <= 0:
+        return int(np.argmax(visits)), temperature
+    weights = visits.astype(np.float64) ** (1.0 / temperature)
+    weights /= weights.sum()
+    action = int(np.random.default_rng(selection_seed).choice(ACTION_SIZE, p=weights))
+    return action, temperature
 
 
 def search_position(
@@ -224,22 +238,10 @@ def search_position(
     if total <= 0:
         raise RuntimeError("MCTS root has no visited legal child")
     policy = visits[positive].astype(np.float64) / total
-    temperature = (
-        config.temperature
-        if state.local_state.move_number < config.temperature_drop_ply
-        else 0.0
+    action, temperature = _select_action(
+        visits, state.local_state.move_number, config, selection_seed
     )
-    if temperature > 0:
-        weights = visits.astype(np.float64) ** (1.0 / temperature)
-        weights /= weights.sum()
-        action = int(np.random.default_rng(selection_seed).choice(ACTION_SIZE, p=weights))
-    else:
-        action = int(np.argmax(visits))
-    root_value = (
-        float(root.total_reward / root.explore_count)
-        if root.explore_count
-        else 0.0
-    )
+    root_value = float(root.total_reward / root.explore_count) if root.explore_count else 0.0
     raw_root = evaluator.state_evaluation(state)
     return MCTSSearchResult(
         action=action,
@@ -247,9 +249,7 @@ def search_position(
         policy_values=tuple(float(value) for value in policy.astype(np.float32)),
         simulations=int(root.explore_count),
         root_value=root_value,
-        root_score_margin=(
-            0.0 if raw_root.score_margin is None else float(raw_root.score_margin)
-        ),
+        root_score_margin=(0.0 if raw_root.score_margin is None else float(raw_root.score_margin)),
         root_score_available=raw_root.score_margin is not None,
         temperature=temperature,
         search_seed=search_seed,

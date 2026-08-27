@@ -9,7 +9,6 @@ import numpy as np
 from zero_ttt.game.features import PositionFeatures
 from zero_ttt.game.rules import BOARD_AREA, BOARD_SIZE, PASS_ACTION
 
-
 SYMMETRY_COUNT = 8
 
 

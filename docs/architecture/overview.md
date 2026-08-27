@@ -49,6 +49,19 @@ flowchart LR
 - Learner 与 evaluator 可同时驻留 GPU，但默认分阶段执行，不并发提交 CUDA 工作。
 - 所有运行、构建和测试只通过 Docker 支持。
 
+## 代码依赖方向
+
+重构后的代码按“领域契约 → adapter → application service → workflow 入口”组合：
+
+- `game`、`model` 是纯领域层；`data.contracts` 与 `training.contracts` 定义跨层值对象。
+- SQLite 由 `CatalogSession`、`CatalogRepository`、`SnapshotService` 和 `ShardLifecycle`
+  四个 adapter/service 分担；公开 `Catalog` 只是兼容门面。
+- NPZ 编解码由 `TrajectoryNpzCodec`/`AnnotationNpzCodec` 负责，`ShardStore` 只处理安全路径、
+  原子提交和内容寻址。
+- `TrainingSession` 与 `SelfPlayService` 是应用服务；CLI 和控制台只负责参数、交互和状态转换。
+- `zero_ttt.console` 与 `zero_ttt.cli` 不得被 `game`、`model`、`data` 或 `training` 反向导入；
+  该约束由 AST 架构测试持续检查。
+
 所有持久格式只接受[集中登记的当前版本](versioning.md)。旧运行产物不自动删除，也不提供迁移器。
 目标组件见 [Learner 与流程边界](learner-and-workflows.md)、
 [序列化训练数据](trajectory-storage.md)与[统一训练生命周期](../workflows/training-lifecycle.md)。

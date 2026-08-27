@@ -27,7 +27,7 @@ def test_state_round_trip_and_atomic_migration_history(tmp_path: Path) -> None:
     )
     store.save(state)
     assert store.load() == state
-    assert not tuple((tmp_path / "console").glob(".*.tmp"))
+    assert not tuple((tmp_path / "console").glob(".tmp-*"))
 
 
 def test_state_machine_rejects_unsafe_direct_transitions() -> None:
@@ -40,9 +40,11 @@ def test_state_machine_rejects_unsafe_direct_transitions() -> None:
 
 def test_console_lock_rejects_a_second_owner(tmp_path: Path) -> None:
     path = tmp_path / "console.lock"
-    with ConsoleLock(path):
-        with pytest.raises(RuntimeError, match="already owns"):
-            with ConsoleLock(path):
-                pass
+    with (
+        ConsoleLock(path),
+        pytest.raises(RuntimeError, match="already owns"),
+        ConsoleLock(path),
+    ):
+        pass
     with ConsoleLock(path):
         pass

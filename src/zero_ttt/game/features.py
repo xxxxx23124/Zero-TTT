@@ -9,7 +9,6 @@ import numpy as np
 from zero_ttt.game.rules import BOARD_AREA, BOARD_SIZE, Color, analyze_board
 from zero_ttt.game.state import GameState
 
-
 POINT_FEATURES = 25
 GLOBAL_FEATURES = 5
 FEATURE_SCHEMA_ID = "zero-ttt-position-features-25x19x19-global5-v1"
@@ -23,7 +22,9 @@ class PositionFeatures:
 
     def __post_init__(self) -> None:
         if self.board.shape != (POINT_FEATURES, BOARD_SIZE, BOARD_SIZE):
-            raise ValueError(f"board features must have shape {(POINT_FEATURES, BOARD_SIZE, BOARD_SIZE)}")
+            raise ValueError(
+                f"board features must have shape {(POINT_FEATURES, BOARD_SIZE, BOARD_SIZE)}"
+            )
         if self.global_features.shape != (GLOBAL_FEATURES,):
             raise ValueError(f"global features must have shape {(GLOBAL_FEATURES,)}")
         if self.legal.shape != (BOARD_AREA + 1,):

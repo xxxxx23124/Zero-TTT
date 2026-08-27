@@ -114,87 +114,100 @@ class BatchedInferenceBroker:
             first = self._queue.get()
             if first is None:
                 return
-            requests = [first]
-            deadline = time.monotonic() + self.batch_wait_seconds
-            while len(requests) < self.batch_size:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                try:
-                    request = self._queue.get(timeout=remaining)
-                except queue.Empty:
-                    break
-                if request is None:
-                    stopping = True
-                    break
-                requests.append(request)
-
-            groups: OrderedDict[tuple[object, ...], list[_Request]] = OrderedDict()
-            for request in requests:
-                identity = request.state.identity()
-                cached = self._cache_get(identity)
-                if cached is not None:
-                    request.future.set_result(cached)
-                else:
-                    groups.setdefault(identity, []).append(request)
+            requests, stopping = self._collect_requests(first)
+            groups = self._uncached_groups(requests)
             if not groups:
                 continue
-
-            unique = [group[0] for group in groups.values()]
             try:
-                features = [encode_position(request.state) for request in unique]
-                batch = InferenceBatch(
-                    board=torch.from_numpy(np.stack([item.board for item in features])),
-                    global_features=torch.from_numpy(
-                        np.stack([item.global_features for item in features])
-                    ),
-                    legal=torch.from_numpy(np.stack([item.legal for item in features])),
-                )
-                inference_started = time.perf_counter()
-                output = self.evaluator.evaluate(batch)
-                logits = output.policy_logits.detach().cpu().numpy()
-                values = output.value.detach().float().reshape(len(unique)).cpu().numpy()
-                ownership = (
-                    None
-                    if output.ownership is None
-                    else output.ownership.detach().float().cpu().numpy()
-                )
-                scores = (
-                    None
-                    if output.score_margin is None
-                    else output.score_margin.detach().float().reshape(len(unique)).cpu().numpy()
-                )
-                inference_seconds = time.perf_counter() - inference_started
-                if len(logits) != len(unique):
-                    raise RuntimeError("position evaluator returned the wrong batch size")
-                for index, (identity, duplicates) in enumerate(groups.items()):
-                    evaluation = StateEvaluation(
-                        policy_logits=np.asarray(logits[index], dtype=np.float32),
-                        value=float(values[index]),
-                        ownership=(
-                            None
-                            if ownership is None
-                            else np.asarray(ownership[index], dtype=np.float32)
-                        ),
-                        score_margin=None if scores is None else float(scores[index]),
-                    )
-                    self._cache_put(identity, evaluation)
-                    for request in duplicates:
-                        request.future.set_result(evaluation)
-                with self._lock:
-                    self._batches += 1
-                    self._real_evaluations += len(unique)
-                    self._full_batches += int(len(unique) == self.batch_size)
-                    self._inference_seconds += inference_seconds
-                    self._max_inference_seconds = max(
-                        self._max_inference_seconds,
-                        inference_seconds,
-                    )
-            except BaseException as error:
-                for duplicates in groups.values():
-                    for request in duplicates:
-                        if not request.future.done():
-                            request.future.set_exception(error)
+                self._evaluate_groups(groups)
+            except Exception as error:
+                self._fail_groups(groups, error)
+
+    def _collect_requests(self, first: _Request) -> tuple[list[_Request], bool]:
+        requests = [first]
+        deadline = time.monotonic() + self.batch_wait_seconds
+        while len(requests) < self.batch_size:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                request = self._queue.get(timeout=remaining)
+            except queue.Empty:
+                break
+            if request is None:
+                return requests, True
+            requests.append(request)
+        return requests, False
+
+    def _uncached_groups(
+        self, requests: list[_Request]
+    ) -> OrderedDict[tuple[object, ...], list[_Request]]:
+        groups: OrderedDict[tuple[object, ...], list[_Request]] = OrderedDict()
+        for request in requests:
+            identity = request.state.identity()
+            cached = self._cache_get(identity)
+            if cached is None:
+                groups.setdefault(identity, []).append(request)
+            else:
+                request.future.set_result(cached)
+        return groups
+
+    def _evaluate_groups(self, groups: OrderedDict[tuple[object, ...], list[_Request]]) -> None:
+        unique = [group[0] for group in groups.values()]
+        features = [encode_position(request.state) for request in unique]
+        batch = InferenceBatch(
+            board=torch.from_numpy(np.stack([item.board for item in features])),
+            global_features=torch.from_numpy(np.stack([item.global_features for item in features])),
+            legal=torch.from_numpy(np.stack([item.legal for item in features])),
+        )
+        started = time.perf_counter()
+        output = self.evaluator.evaluate(batch)
+        elapsed = time.perf_counter() - started
+        logits = output.policy_logits.detach().cpu().numpy()
+        values = output.value.detach().float().reshape(len(unique)).cpu().numpy()
+        ownership = self._optional_numpy(output.ownership)
+        scores = self._optional_numpy(output.score_margin, reshape=len(unique))
+        if len(logits) != len(unique):
+            raise RuntimeError("position evaluator returned the wrong batch size")
+        for index, (identity, duplicates) in enumerate(groups.items()):
+            evaluation = StateEvaluation(
+                policy_logits=np.asarray(logits[index], dtype=np.float32),
+                value=float(values[index]),
+                ownership=(
+                    None if ownership is None else np.asarray(ownership[index], dtype=np.float32)
+                ),
+                score_margin=None if scores is None else float(scores[index]),
+            )
+            self._cache_put(identity, evaluation)
+            for request in duplicates:
+                request.future.set_result(evaluation)
+        self._record_batch(len(unique), elapsed)
+
+    @staticmethod
+    def _optional_numpy(tensor, *, reshape: int | None = None):
+        if tensor is None:
+            return None
+        value = tensor.detach().float()
+        if reshape is not None:
+            value = value.reshape(reshape)
+        return value.cpu().numpy()
+
+    def _record_batch(self, unique_count: int, elapsed: float) -> None:
+        with self._lock:
+            self._batches += 1
+            self._real_evaluations += unique_count
+            self._full_batches += int(unique_count == self.batch_size)
+            self._inference_seconds += elapsed
+            self._max_inference_seconds = max(self._max_inference_seconds, elapsed)
+
+    @staticmethod
+    def _fail_groups(
+        groups: OrderedDict[tuple[object, ...], list[_Request]], error: Exception
+    ) -> None:
+        for duplicates in groups.values():
+            for request in duplicates:
+                if not request.future.done():
+                    request.future.set_exception(error)
 
     @property
     def stats(self) -> BatchingStats:
@@ -208,14 +221,10 @@ class BatchedInferenceBroker:
                 padded_evaluations=slots - self._real_evaluations,
                 full_batches=self._full_batches,
                 mean_batch_latency_ms=(
-                    0.0
-                    if self._batches == 0
-                    else 1000.0 * self._inference_seconds / self._batches
+                    0.0 if self._batches == 0 else 1000.0 * self._inference_seconds / self._batches
                 ),
                 max_batch_latency_ms=1000.0 * self._max_inference_seconds,
-                real_batch_fraction=(
-                    0.0 if slots == 0 else self._real_evaluations / slots
-                ),
+                real_batch_fraction=(0.0 if slots == 0 else self._real_evaluations / slots),
                 full_batch_fraction=(
                     0.0 if self._batches == 0 else self._full_batches / self._batches
                 ),
@@ -229,7 +238,7 @@ class BatchedInferenceBroker:
             self._queue.put(None)
         self._thread.join()
 
-    def __enter__(self) -> "BatchedInferenceBroker":
+    def __enter__(self) -> BatchedInferenceBroker:
         return self
 
     def __exit__(self, *_: object) -> None:

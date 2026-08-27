@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
-import hashlib
-import json
 import math
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from types import UnionType
-from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
+from typing import Any, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 
+from zero_ttt._io import canonical_json_bytes, sha256_bytes
 from zero_ttt.versioning import EXPERIMENT_CONFIG_SCHEMA
 
 
@@ -143,23 +142,15 @@ class ExperimentConfig:
     runtime: RuntimeConfig
 
     def canonical_json(self) -> str:
-        return json.dumps(
-            dataclasses.asdict(self),
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        return canonical_json_bytes(dataclasses.asdict(self)).decode("utf-8")
 
     @property
     def sha256(self) -> str:
-        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
+        return sha256_bytes(self.canonical_json().encode("utf-8"))
 
     @property
     def run_dir(self) -> Path:
         return Path(self.runtime.run_dir)
-
-
-T = TypeVar("T")
 
 
 def _coerce_value(expected: Any, value: Any, path: str) -> Any:
@@ -174,9 +165,13 @@ def _coerce_value(expected: Any, value: Any, path: str) -> Any:
     if dataclasses.is_dataclass(expected):
         if not isinstance(value, dict):
             raise TypeError(f"{path}: expected table")
-        return _construct_dataclass(expected, value, path)
+        return _construct_dataclass(cast(type[Any], expected), value, path)
+    return _coerce_scalar(expected, value, path)
+
+
+def _coerce_scalar(expected: Any, value: Any, path: str) -> Any:
     if expected is float:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, int | float):
             raise TypeError(f"{path}: expected float")
         result = float(value)
         if not math.isfinite(result):
@@ -197,8 +192,13 @@ def _coerce_value(expected: Any, value: Any, path: str) -> Any:
     raise TypeError(f"{path}: unsupported configuration type {expected!r}")
 
 
-def _construct_dataclass(cls: type[T], data: dict[str, Any], path: str) -> T:
-    fields = {field.name: field for field in dataclasses.fields(cls)}
+T = TypeVar("T")
+
+
+def _construct_dataclass(  # noqa: UP047 - host characterization tests still use 3.11
+    cls: type[T], data: dict[str, Any], path: str
+) -> T:
+    fields = {field.name: field for field in dataclasses.fields(cast(Any, cls))}
     unknown = sorted(set(data) - set(fields))
     missing = sorted(set(fields) - set(data))
     if unknown:
@@ -206,24 +206,35 @@ def _construct_dataclass(cls: type[T], data: dict[str, Any], path: str) -> T:
     if missing:
         raise ValueError(f"{path}: missing fields: {', '.join(missing)}")
     hints = get_type_hints(cls)
-    kwargs = {
-        name: _coerce_value(hints[name], data[name], f"{path}.{name}")
-        for name in fields
-    }
+    kwargs = {name: _coerce_value(hints[name], data[name], f"{path}.{name}") for name in fields}
     return cls(**kwargs)
 
 
 def validate_config(config: ExperimentConfig) -> None:
     EXPERIMENT_CONFIG_SCHEMA.require(config.schema_version)
-    if config.game.board_size != 19:
+    _validate_game(config.game)
+    _validate_model(config.model)
+    _validate_training(config.training)
+    _validate_execution(config.execution)
+    _validate_search(config.search)
+    _validate_selfplay(config.selfplay)
+    _validate_runtime(config.runtime)
+
+
+def _validate_game(game: GameConfig) -> None:
+    if game.board_size != 19:
         raise ValueError("only 19x19 is supported")
-    if config.game.history_length != 8:
+    if game.history_length != 8:
         raise ValueError("the feature schema requires history_length=8")
-    if config.game.max_moves < 2:
+    if game.max_moves < 2:
         raise ValueError("game.max_moves must be at least 2")
-    model = config.model
+
+
+def _validate_model(model: ModelConfig) -> None:
     if model.input_planes != 25 or model.global_features != 5:
-        raise ValueError("the current feature schema requires 25 point planes and 5 global features")
+        raise ValueError(
+            "the current feature schema requires 25 point planes and 5 global features"
+        )
     if model.d_model <= 0 or model.n_heads <= 0 or model.d_model % model.n_heads:
         raise ValueError("model.d_model must be positive and divisible by model.n_heads")
     if model.n_layers <= 0 or model.d_ff <= 0:
@@ -239,17 +250,16 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("hypernet.num_layers must be within model depth")
     if hyper.rank <= 0 or hyper.hidden_dim <= 0:
         raise ValueError("hypernet rank and hidden_dim must be positive")
-    for name, value in (
-        ("context_gradient_scale", hyper.context_gradient_scale),
-    ):
-        if value < 0:
-            raise ValueError(f"hypernet.{name} must be non-negative")
+    if hyper.context_gradient_scale < 0:
+        raise ValueError("hypernet.context_gradient_scale must be non-negative")
     depth_mixing = model.depth_mixing
     if depth_mixing.dilation <= 0 or depth_mixing.period <= 0:
         raise ValueError("depth_mixing dilation and period must be positive")
     if depth_mixing.dilation > model.n_layers or depth_mixing.period > model.n_layers:
         raise ValueError("depth_mixing dilation and period cannot exceed model depth")
-    train = config.training
+
+
+def _validate_training(train: TrainingConfig) -> None:
     positive_train = (
         train.batch_size,
         train.accumulation_steps,
@@ -272,12 +282,16 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("training.hypernet.gradient_clip must be positive")
     if not (0 < train.beta1 < 1 and 0 < train.beta2 < 1):
         raise ValueError("AdamW beta values must be in (0, 1)")
-    execution = config.execution
+
+
+def _validate_execution(execution: ExecutionConfig) -> None:
     if execution.activation_checkpoint_stride <= 0:
         raise ValueError("execution.activation_checkpoint_stride must be positive")
     if not execution.compile_mode:
         raise ValueError("execution.compile_mode cannot be empty")
-    search = config.search
+
+
+def _validate_search(search: SearchConfig) -> None:
     if search.max_simulations < 2:
         raise ValueError("search.max_simulations must be at least 2")
     if search.uct_c <= 0 or search.dirichlet_alpha <= 0:
@@ -286,7 +300,9 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("search.dirichlet_epsilon must be in [0, 1]")
     if search.temperature < 0 or search.temperature_drop_ply < 0:
         raise ValueError("search temperature settings must be non-negative")
-    selfplay = config.selfplay
+
+
+def _validate_selfplay(selfplay: SelfPlayConfig) -> None:
     if (
         selfplay.actor_count <= 0
         or selfplay.inference_batch_size <= 0
@@ -296,9 +312,12 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("selfplay batching settings are invalid")
     if selfplay.actor_count < selfplay.inference_batch_size:
         raise ValueError("selfplay.actor_count must cover one inference batch")
-    if config.runtime.device not in {"cpu", "cuda"}:
+
+
+def _validate_runtime(runtime: RuntimeConfig) -> None:
+    if runtime.device not in {"cpu", "cuda"}:
         raise ValueError("runtime.device must be 'cpu' or 'cuda'")
-    if config.runtime.ema_device not in {"cpu", "cuda"}:
+    if runtime.ema_device not in {"cpu", "cuda"}:
         raise ValueError("runtime.ema_device must be 'cpu' or 'cuda'")
 
 

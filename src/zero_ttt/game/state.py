@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from zero_ttt.config import GameConfig
 from zero_ttt.game.rules import (
@@ -42,7 +42,7 @@ class GameState:
     position_history: frozenset[bytes]
 
     @classmethod
-    def new(cls, config: GameConfig) -> "GameState":
+    def new(cls, config: GameConfig) -> GameState:
         empty = bytes(BOARD_AREA)
         return cls(
             board=empty,
@@ -62,7 +62,7 @@ class GameState:
             return (False,) * ACTION_SIZE
         return legal_actions(self.board, self.to_play, self.position_history)
 
-    def play(self, action: int) -> "GameState":
+    def play(self, action: int) -> GameState:
         if self.is_terminal():
             raise ValueError("cannot play after the game has ended")
         if not 0 <= action < ACTION_SIZE:
@@ -95,7 +95,7 @@ class GameState:
             position_history=frozenset(new_history),
         )
 
-    def play_many(self, actions: Iterable[int]) -> "GameState":
+    def play_many(self, actions: Iterable[int]) -> GameState:
         state = self
         for action in actions:
             state = state.play(action)

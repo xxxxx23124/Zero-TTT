@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 import re
 import shutil
+import tempfile
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
 import torch
 
+from zero_ttt._io import atomic_write_json, fsync_directory, sha256_file
 from zero_ttt.versioning import MODEL_ARTIFACT_SCHEMA
 
 
@@ -32,12 +32,15 @@ class CheckpointManager:
 
     @staticmethod
     def _atomic_torch_save(payload: Any, destination: Path) -> None:
-        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".t", dir=destination.parent)
+        temporary = Path(temporary_name)
         try:
-            torch.save(payload, temporary)
-            with temporary.open("rb+") as handle:
+            with os.fdopen(descriptor, "wb") as handle:
+                torch.save(payload, handle)
+                handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, destination)
+            fsync_directory(destination.parent)
         finally:
             if temporary.exists():
                 temporary.unlink()
@@ -47,31 +50,45 @@ class CheckpointManager:
         destination = self.checkpoint_dir / f"step_{step:012d}.pt"
         self._atomic_torch_save(payload, destination)
         checkpoints = sorted(self.checkpoint_dir.glob("step_*.pt"))
-        for old in checkpoints[:-self.keep]:
+        for old in checkpoints[: -self.keep]:
             old.unlink()
         return destination
 
     @staticmethod
     def _atomic_json_save(payload: dict[str, Any], destination: Path) -> None:
-        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-                json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, destination)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
+        atomic_write_json(destination, payload)
 
     @staticmethod
     def _sha256(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        return sha256_file(path)
+
+    @staticmethod
+    def _publication_payload_matches(
+        existing: dict[str, Any],
+        expected: dict[str, Any],
+    ) -> bool:
+        identity_fields = (
+            "checkpoint_schema_version",
+            "config_json",
+            "config_sha256",
+            "model_version",
+            "run_id",
+            "samples_seen",
+        )
+        if any(existing.get(name) != expected.get(name) for name in identity_fields):
+            return False
+        existing_state = existing.get("slow_state")
+        expected_state = expected.get("slow_state")
+        if not isinstance(existing_state, dict) or not isinstance(expected_state, dict):
+            return False
+        if existing_state.keys() != expected_state.keys():
+            return False
+        return all(
+            isinstance(existing_state[name], torch.Tensor)
+            and isinstance(expected_state[name], torch.Tensor)
+            and torch.equal(existing_state[name].cpu(), expected_state[name].cpu())
+            for name in expected_state
+        )
 
     def save_publication(
         self,
@@ -84,6 +101,31 @@ class CheckpointManager:
         if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
             raise ValueError("run_id contains unsafe path characters")
         MODEL_ARTIFACT_SCHEMA.require(metadata.get("checkpoint_schema_version"))
+        payload = self._build_publication_payload(run_id, step, samples_seen, slow_state, metadata)
+        run_directory = self.publication_dir / run_id
+        run_directory.mkdir(parents=True, exist_ok=True)
+        immutable = run_directory / f"step_{step:012d}"
+        if immutable.exists():
+            model_path, digest = self._validate_existing_publication(
+                immutable, run_id, step, samples_seen, payload
+            )
+            self._write_current_pointer(model_path, run_id, step, samples_seen, digest)
+            return model_path
+        model_path, digest = self._write_new_publication(
+            run_directory, immutable, run_id, step, samples_seen, payload
+        )
+        self._write_current_pointer(model_path, run_id, step, samples_seen, digest)
+        self._prune_publications(run_directory)
+        return model_path
+
+    @staticmethod
+    def _build_publication_payload(
+        run_id: str,
+        step: int,
+        samples_seen: int,
+        slow_state: dict[str, torch.Tensor],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
         bf16_state = {
             name: (
                 tensor.detach().to(device="cpu", dtype=torch.bfloat16)
@@ -92,45 +134,51 @@ class CheckpointManager:
             )
             for name, tensor in slow_state.items()
         }
-        payload = {
+        return {
             **metadata,
             "model_version": step,
             "run_id": run_id,
             "samples_seen": samples_seen,
             "slow_state": bf16_state,
         }
-        run_directory = self.publication_dir / run_id
-        run_directory.mkdir(parents=True, exist_ok=True)
-        immutable = run_directory / f"step_{step:012d}"
-        if immutable.exists():
-            metadata_path = immutable / "metadata.json"
-            model_path = immutable / "model.pt"
-            if not metadata_path.is_file() or not model_path.is_file():
-                raise FileExistsError(f"incomplete publication already exists: {run_id}:{step}")
-            existing = json.loads(metadata_path.read_text(encoding="utf-8"))
-            MODEL_ARTIFACT_SCHEMA.require(existing.get("schema_version"))
-            if (
-                existing.get("run_id") != run_id
-                or existing.get("optimizer_step") != step
-                or existing.get("samples_seen") != samples_seen
-                or existing.get("sha256") != self._sha256(model_path)
-            ):
-                raise FileExistsError(f"conflicting publication already exists: {run_id}:{step}")
-            relative_model = model_path.relative_to(self.run_dir).as_posix()
-            self._atomic_json_save(
-                {
-                    "schema_version": MODEL_ARTIFACT_SCHEMA.current,
-                    "run_id": run_id,
-                    "optimizer_step": step,
-                    "samples_seen": samples_seen,
-                    "sha256": existing["sha256"],
-                    "model_path": relative_model,
-                },
-                self.publication_dir / "current.json",
-            )
-            return model_path
-        temporary = run_directory / f".step_{step:012d}.{uuid.uuid4().hex}.tmp"
-        temporary.mkdir()
+
+    def _validate_existing_publication(
+        self,
+        immutable: Path,
+        run_id: str,
+        step: int,
+        samples_seen: int,
+        payload: dict[str, Any],
+    ) -> tuple[Path, str]:
+        metadata_path = immutable / "metadata.json"
+        model_path = immutable / "model.pt"
+        if not metadata_path.is_file() or not model_path.is_file():
+            raise FileExistsError(f"incomplete publication already exists: {run_id}:{step}")
+        existing = json.loads(metadata_path.read_text(encoding="utf-8"))
+        MODEL_ARTIFACT_SCHEMA.require(existing.get("schema_version"))
+        digest = self._sha256(model_path)
+        identity = (run_id, step, samples_seen, digest)
+        stored = (
+            existing.get("run_id"),
+            existing.get("optimizer_step"),
+            existing.get("samples_seen"),
+            existing.get("sha256"),
+        )
+        existing_payload = self.load_publication(model_path, map_location="cpu")
+        if stored != identity or not self._publication_payload_matches(existing_payload, payload):
+            raise FileExistsError(f"conflicting publication already exists: {run_id}:{step}")
+        return model_path, digest
+
+    def _write_new_publication(
+        self,
+        run_directory: Path,
+        immutable: Path,
+        run_id: str,
+        step: int,
+        samples_seen: int,
+        payload: dict[str, Any],
+    ) -> tuple[Path, str]:
+        temporary = Path(tempfile.mkdtemp(prefix=".p-", dir=run_directory))
         try:
             model_path = temporary / "model.pt"
             self._atomic_torch_save(payload, model_path)
@@ -145,10 +193,20 @@ class CheckpointManager:
             }
             self._atomic_json_save(publication_metadata, temporary / "metadata.json")
             os.replace(temporary, immutable)
+            fsync_directory(run_directory)
         finally:
             if temporary.exists():
                 shutil.rmtree(temporary)
-        relative_model = (immutable / "model.pt").relative_to(self.run_dir).as_posix()
+        return immutable / "model.pt", digest
+
+    def _write_current_pointer(
+        self,
+        model_path: Path,
+        run_id: str,
+        step: int,
+        samples_seen: int,
+        digest: str,
+    ) -> None:
         self._atomic_json_save(
             {
                 "schema_version": MODEL_ARTIFACT_SCHEMA.current,
@@ -156,16 +214,15 @@ class CheckpointManager:
                 "optimizer_step": step,
                 "samples_seen": samples_seen,
                 "sha256": digest,
-                "model_path": relative_model,
+                "model_path": model_path.relative_to(self.run_dir).as_posix(),
             },
             self.publication_dir / "current.json",
         )
-        publications = sorted(
-            path for path in run_directory.glob("step_*") if path.is_dir()
-        )
+
+    def _prune_publications(self, run_directory: Path) -> None:
+        publications = sorted(path for path in run_directory.glob("step_*") if path.is_dir())
         for old in publications[: -self.publication_keep]:
             shutil.rmtree(old)
-        return immutable / "model.pt"
 
     def save_fault(self, step: int, payload: dict[str, Any], reason: str) -> Path:
         MODEL_ARTIFACT_SCHEMA.require(payload.get("checkpoint_schema_version"))

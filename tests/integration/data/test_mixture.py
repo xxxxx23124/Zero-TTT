@@ -130,3 +130,39 @@ def test_mixture_manifest_source_and_learner_step(
         first_snapshot,
         second_snapshot,
     )
+
+
+def test_mixture_components_share_trajectory_shard_cache(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    trajectory_factory,
+    manifest_factory,
+) -> None:
+    record = trajectory_factory()
+    store = ShardStore(tmp_path / "processed")
+    catalog_path = tmp_path / "catalog.sqlite"
+    asset = ManifestAsset("source.zip", record.asset_sha256, 1)
+    with Catalog(catalog_path, store) as catalog:
+        catalog.register_asset(manifest_factory(asset), asset)
+        info = store.write_trajectories([record])
+        catalog.commit_trajectory_shard(info, [record])
+        unfiltered = catalog.create_snapshot(1, validation_fraction=0.0)
+        external = catalog.create_snapshot(1, validation_fraction=0.0, source_kind="external")
+    assert unfiltered != external
+    manifest = TrainingMixtureManifest(
+        TRAINING_MIXTURE_SCHEMA.current,
+        (MixtureComponent(unfiltered, 1.0), MixtureComponent(external, 1.0)),
+    )
+    calls = 0
+    original = ShardStore.read_verified_trajectories
+
+    def counting_read(self, relative_path: str, expected_sha256: str):
+        nonlocal calls
+        calls += 1
+        return original(self, relative_path, expected_sha256)
+
+    monkeypatch.setattr(ShardStore, "read_verified_trajectories", counting_read)
+    with MixtureBatchSource(catalog_path, store.root, manifest) as source:
+        source.sources[0].next_batch(2, np.random.default_rng(1))
+        source.sources[1].next_batch(2, np.random.default_rng(2))
+    assert calls == 1

@@ -58,9 +58,7 @@ def test_broker_forms_one_full_batch_and_caches() -> None:
 def test_broker_flushes_partial_batch_without_deadlock() -> None:
     config = load_config("configs/test.toml")
     evaluator = CountingEvaluator()
-    with BatchedInferenceBroker(
-        evaluator, batch_size=16, batch_wait_ms=0, cache_size=4
-    ) as broker:
+    with BatchedInferenceBroker(evaluator, batch_size=16, batch_wait_ms=0, cache_size=4) as broker:
         result = broker.evaluate(GameState.new(config.game))
         assert result.policy_logits.shape == (362,)
         assert evaluator.calls == [1]
@@ -70,9 +68,7 @@ def test_broker_deduplicates_same_state_and_propagates_errors() -> None:
     config = load_config("configs/test.toml")
     state = GameState.new(config.game)
     evaluator = CountingEvaluator()
-    with BatchedInferenceBroker(
-        evaluator, batch_size=16, batch_wait_ms=50, cache_size=4
-    ) as broker:
+    with BatchedInferenceBroker(evaluator, batch_size=16, batch_wait_ms=50, cache_size=4) as broker:
         with ThreadPoolExecutor(max_workers=16) as pool:
             results = list(pool.map(broker.evaluate, [state] * 16))
         assert len(results) == 16

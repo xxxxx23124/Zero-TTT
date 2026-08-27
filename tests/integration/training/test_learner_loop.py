@@ -15,9 +15,7 @@ def test_hypernetwork_trains_from_first_step_at_reduced_learning_rate(tmp_path) 
     learner = Learner(config, CheckpointManager(tmp_path, keep=2))
     learning_rate = learner._set_schedule(config.training.effective_batch_size)
     hyper_lrs = [
-        group["lr"]
-        for group in learner.optimizer.param_groups
-        if group["group_name"] == "hypernet"
+        group["lr"] for group in learner.optimizer.param_groups if group["group_name"] == "hypernet"
     ]
     assert hyper_lrs and set(hyper_lrs) == {
         learning_rate * config.training.hypernet.learning_rate_multiplier

@@ -12,6 +12,10 @@ from zero_ttt.model.tokens import TokenLayout
 class AxialRoPE2D(nn.Module):
     """Apply independent row and column rotations, leaving CLS unrotated."""
 
+    inv_freq: torch.Tensor
+    row_positions: torch.Tensor
+    col_positions: torch.Tensor
+
     def __init__(
         self,
         config: RoPEConfig,
@@ -29,7 +33,9 @@ class AxialRoPE2D(nn.Module):
         self.axis_dim = config.rotary_dim // 2
         self.scale = config.scale
         pairs_per_axis = self.axis_dim // 2
-        inv_freq = config.base ** (-torch.arange(pairs_per_axis, dtype=torch.float32) / pairs_per_axis)
+        inv_freq = config.base ** (
+            -torch.arange(pairs_per_axis, dtype=torch.float32) / pairs_per_axis
+        )
         if config.learnable:
             self.inv_freq = nn.Parameter(inv_freq)
         else:
@@ -51,7 +57,9 @@ class AxialRoPE2D(nn.Module):
         rotated_odd = even * sin + odd * cos
         return torch.stack((rotated_even, rotated_odd), dim=-1).flatten(-2)
 
-    def _trig(self, positions: torch.Tensor, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
+    def _trig(
+        self, positions: torch.Tensor, dtype: torch.dtype
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         angles = torch.outer(positions * self.scale, self.inv_freq)
         return angles.cos().to(dtype=dtype)[None, None], angles.sin().to(dtype=dtype)[None, None]
 

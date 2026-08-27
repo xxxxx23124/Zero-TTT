@@ -1,5 +1,8 @@
 """Streaming importer for KataGo archives containing line-delimited SGFs."""
 
+# The dependency is supplied by the Docker runtime.
+# pyright: reportMissingImports=false
+
 from __future__ import annotations
 
 import re
@@ -20,7 +23,6 @@ from zero_ttt.data.records import (
 from zero_ttt.game.rules import BOARD_AREA, BOARD_SIZE, PASS_ACTION
 from zero_ttt.game.state import GameState
 from zero_ttt.versioning import RECORD_SCHEMA
-
 
 _START_TURN = re.compile(r"(?:^|,)startTurnIdx=(\d+)(?:,|$)")
 _MODE = re.compile(r"(?:^|,)mode=([^,]+)(?:,|$)")
@@ -176,13 +178,7 @@ def _parse_external_sgf(raw: bytes) -> ParsedKataGoGame:
     )
 
 
-def _build_trajectory(
-    parsed: ParsedKataGoGame,
-    manifest: SourceManifest,
-    asset: ManifestAsset,
-    member_path: str,
-    ordinal: int,
-) -> TrajectoryRecord:
+def _validate_game_header(parsed: ParsedKataGoGame) -> None:
     if parsed.board_size != BOARD_SIZE:
         raise ImportRejected("board_size", "only 19x19 games are supported")
     if parsed.has_setup:
@@ -192,26 +188,34 @@ def _build_trajectory(
     if parsed.game_type != "1":
         raise ImportRejected("game_type", "only Go SGFs are supported")
 
+
+def _training_range(parsed: ParsedKataGoGame) -> tuple[int, int, list[int]]:
     trainable_start, mode, used_initial = _parse_root_comment(parsed.comment)
     if mode != "normal":
         raise ImportRejected("mode", f"unsupported KataGo mode {mode!r}")
     if used_initial:
         raise ImportRejected("initial_position", "non-empty initial positions are not supported")
-
     komi_half_points = round(parsed.komi * 2)
     if abs(parsed.komi * 2 - komi_half_points) > 1e-6:
         raise ImportRejected("komi", "komi must be an integer number of half-points")
+    moves = _alternating_moves(parsed.moves)
+    if not moves or trainable_start >= len(moves):
+        raise ImportRejected("no_trainable_positions", "game has no trainable positions")
+    return trainable_start, komi_half_points, moves
 
-    moves: list[int] = []
+
+def _alternating_moves(parsed_moves: tuple[tuple[str, int], ...]) -> list[int]:
+    moves = []
     expected_color = "b"
-    for color, action in parsed.moves:
+    for color, action in parsed_moves:
         if color != expected_color:
             raise ImportRejected("turn_order", "moves must alternate starting with black")
         moves.append(action)
         expected_color = "w" if expected_color == "b" else "b"
-    if not moves or trainable_start >= len(moves):
-        raise ImportRejected("no_trainable_positions", "game has no trainable positions")
+    return moves
 
+
+def _replay_moves(moves: list[int], komi_half_points: int) -> GameState:
     state = GameState.new(
         GameConfig(
             board_size=BOARD_SIZE,
@@ -230,27 +234,52 @@ def _build_trajectory(
             state = state.play(action)
         except ValueError as error:
             raise ImportRejected("illegal_move", f"illegal move at ply {ply}: {error}") from error
+    return state
 
+
+@dataclass(frozen=True, slots=True)
+class _ExternalTargets:
+    value_black: float
+    value_available: bool
+    score_margin_black: float
+    score_available: bool
+    ownership_black: tuple[float, ...]
+    ownership_available: bool
+    resigned: bool
+
+
+def _external_targets(parsed: ParsedKataGoGame, state: GameState) -> _ExternalTargets:
     value_black, declared_margin_half, resigned = _parse_result(parsed.result)
     exact_rules = _rules_are_exact(parsed.rules)
-    value_available = False
-    score_available = False
-    ownership_available = False
-    score_margin_black = 0.0
-    ownership_black = (0.0,) * BOARD_AREA
     if exact_rules and resigned:
-        value_available = True
-    elif exact_rules and declared_margin_half is not None and state.is_terminal():
+        return _ExternalTargets(value_black, True, 0.0, False, (0.0,) * BOARD_AREA, False, resigned)
+    if exact_rules and declared_margin_half is not None and state.is_terminal():
         local = state.score().score
         if local.margin_half_points == declared_margin_half:
-            value_available = True
-            score_available = True
-            ownership_available = True
-            score_margin_black = local.margin_half_points / 2.0
-            ownership_black = tuple(
-                -1.0 if value == 255 else float(value) for value in local.ownership
+            ownership = tuple(-1.0 if value == 255 else float(value) for value in local.ownership)
+            return _ExternalTargets(
+                value_black,
+                True,
+                local.margin_half_points / 2.0,
+                True,
+                ownership,
+                True,
+                resigned,
             )
+    return _ExternalTargets(value_black, False, 0.0, False, (0.0,) * BOARD_AREA, False, resigned)
 
+
+def _build_trajectory(
+    parsed: ParsedKataGoGame,
+    manifest: SourceManifest,
+    asset: ManifestAsset,
+    member_path: str,
+    ordinal: int,
+) -> TrajectoryRecord:
+    _validate_game_header(parsed)
+    trainable_start, komi_half_points, moves = _training_range(parsed)
+    state = _replay_moves(moves, komi_half_points)
+    targets = _external_targets(parsed, state)
     trainable_count = len(moves) - trainable_start
     policy_actions = tuple(moves[trainable_start:])
     policy_values = (1.0,) * trainable_count
@@ -277,15 +306,14 @@ def _build_trajectory(
         policy_row_offsets=policy_offsets,
         policy_actions=policy_actions,
         policy_values=policy_values,
-        value_black=value_black,
-        value_available=value_available,
-        score_margin_black=score_margin_black,
-        score_available=score_available,
-        ownership_black=ownership_black,
-        ownership_available=ownership_available,
+        value_black=targets.value_black,
+        value_available=targets.value_available,
+        score_margin_black=targets.score_margin_black,
+        score_available=targets.score_available,
+        ownership_black=targets.ownership_black,
+        ownership_available=targets.ownership_available,
         termination=(
-            state.termination_reason()
-            or ("resignation" if resigned else "external")
+            state.termination_reason() or ("resignation" if targets.resigned else "external")
         ),
     )
 
@@ -323,9 +351,7 @@ class KataGoSgfImporter:
         if path.stat().st_size != asset.size_bytes or sha256_file(path) != asset.sha256:
             raise ValueError(f"asset integrity check failed: {asset.relative_path}")
         with zipfile.ZipFile(path) as archive:
-            members = sorted(
-                name for name in archive.namelist() if name.lower().endswith(".sgfs")
-            )
+            members = sorted(name for name in archive.namelist() if name.lower().endswith(".sgfs"))
             for member_path in members:
                 with archive.open(member_path) as stream:
                     for ordinal, raw in enumerate(stream):

@@ -19,7 +19,6 @@ from zero_ttt.data.shards import ShardStore
 from zero_ttt.training.contracts import LearnerDataIdentity
 from zero_ttt.versioning import TRAINING_MIXTURE_SCHEMA
 
-
 TrainingSource = CatalogBatchSource | MixtureBatchSource
 
 
@@ -34,7 +33,7 @@ class TrainingDataPlan:
     def close(self) -> None:
         self.source.close()
 
-    def __enter__(self) -> "TrainingDataPlan":
+    def __enter__(self) -> TrainingDataPlan:
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -79,9 +78,7 @@ class TrainingDataPlanner:
     def _mixture(self) -> TrainingDataPlan:
         with self._catalog() as catalog:
             if catalog.selfplay_statistics().games <= 0:
-                raise RuntimeError(
-                    "mixture training requires at least one sealed self-play game"
-                )
+                raise RuntimeError("mixture training requires at least one sealed self-play game")
             selfplay_snapshot = catalog.create_snapshot(
                 self.config.seed,
                 split="train",
@@ -95,9 +92,7 @@ class TrainingDataPlanner:
                 MixtureComponent(self.settings.cold_start_snapshot_id, 0.2),
             ),
         )
-        manifest.save(
-            self.console_dir / "mixtures" / f"{manifest.content_sha256}.json"
-        )
+        manifest.save(self.console_dir / "mixtures" / f"{manifest.content_sha256}.json")
         source = MixtureBatchSource(
             self.settings.catalog_path,
             self.settings.store_root,

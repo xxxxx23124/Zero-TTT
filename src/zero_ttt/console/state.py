@@ -6,11 +6,11 @@ import dataclasses
 import json
 import os
 import time
-import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from zero_ttt._io import atomic_write_json
 from zero_ttt.versioning import CONSOLE_STATE_SCHEMA
 
 
@@ -65,9 +65,7 @@ _TRANSITIONS = {
 
 def transition(state: ConsoleState, operation: Operation) -> ConsoleState:
     if operation not in _TRANSITIONS[state.operation]:
-        raise ValueError(
-            f"invalid console transition: {state.operation} -> {operation}"
-        )
+        raise ValueError(f"invalid console transition: {state.operation} -> {operation}")
     return dataclasses.replace(state, operation=operation)
 
 
@@ -104,18 +102,10 @@ class StateStore:
             raise ValueError("console state fields are incomplete or unknown")
         CONSOLE_STATE_SCHEMA.require(payload["schema_version"])
         round_number = payload["next_collection_round"]
-        if (
-            isinstance(round_number, bool)
-            or not isinstance(round_number, int)
-            or round_number < 0
-        ):
-            raise ValueError(
-                "console next_collection_round must be a non-negative integer"
-            )
+        if isinstance(round_number, bool) or not isinstance(round_number, int) or round_number < 0:
+            raise ValueError("console next_collection_round must be a non-negative integer")
         try:
-            migrations = tuple(
-                MigrationRecord(**item) for item in payload["migrations"]
-            )
+            migrations = tuple(MigrationRecord(**item) for item in payload["migrations"])
             return ConsoleState(
                 schema_version=CONSOLE_STATE_SCHEMA.current,
                 phase=TrainingPhase(payload["phase"]),
@@ -129,20 +119,7 @@ class StateStore:
             raise ValueError("invalid console state") from error
 
     def save(self, state: ConsoleState) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-                json.dump(
-                    _payload(state), handle, sort_keys=True, separators=(",", ":")
-                )
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, self.path)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
+        atomic_write_json(self.path, _payload(state))
 
 
 class ConsoleLock:
@@ -152,7 +129,7 @@ class ConsoleLock:
         self.path = Path(path)
         self._handle = None
 
-    def __enter__(self) -> "ConsoleLock":
+    def __enter__(self) -> ConsoleLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         handle = None
         try:
@@ -173,9 +150,7 @@ class ConsoleLock:
         except OSError as error:
             if handle is not None:
                 handle.close()
-            raise RuntimeError(
-                "another training console already owns this run"
-            ) from error
+            raise RuntimeError("another training console already owns this run") from error
         self._handle = handle
         return self
 

@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, fields
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, fields
 from typing import Any
+
+import torch
+
+from zero_ttt.versioning import MODEL_ARTIFACT_SCHEMA
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,7 +20,7 @@ class LearnerDataIdentity:
     component_snapshot_ids: tuple[str, ...] = ()
 
     @classmethod
-    def from_raw(cls, raw: object) -> "LearnerDataIdentity | None":
+    def from_raw(cls, raw: object) -> LearnerDataIdentity | None:
         if raw is None:
             return None
         if not isinstance(raw, dict):
@@ -24,7 +29,7 @@ class LearnerDataIdentity:
         if set(raw) != expected:
             raise ValueError("checkpoint data identity is incomplete")
         components = raw["component_snapshot_ids"]
-        if not isinstance(components, (list, tuple)) or not all(
+        if not isinstance(components, list | tuple) or not all(
             isinstance(value, str) for value in components
         ):
             raise ValueError("checkpoint data identity is invalid")
@@ -59,7 +64,7 @@ class CheckpointSummary:
     learner_state: dict[str, Any]
 
     @classmethod
-    def from_payload(cls, payload: object) -> "CheckpointSummary":
+    def from_payload(cls, payload: object) -> CheckpointSummary:
         if not isinstance(payload, dict):
             raise ValueError("checkpoint payload is invalid")
         if "data_identity" not in payload:
@@ -94,11 +99,104 @@ class CheckpointSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class CheckpointPayload:
+    """Validated in-memory checkpoint with an unchanged dictionary wire shape."""
+
+    summary: CheckpointSummary
+    fast_state: dict[str, Any]
+    slow_state: dict[str, Any]
+    optimizer_state: dict[str, Any]
+    torch_rng_state: torch.Tensor
+    cuda_rng_state: list[torch.Tensor] | None
+    numpy_rng_state: Mapping[str, Any] | None
+
+    @classmethod
+    def from_payload(cls, payload: object) -> CheckpointPayload:
+        summary = CheckpointSummary.from_payload(payload)
+        assert isinstance(payload, dict)
+        mappings = []
+        for name in ("fast_state", "slow_state", "optimizer_state"):
+            value = payload.get(name)
+            if not isinstance(value, dict):
+                raise ValueError(f"checkpoint {name} is invalid")
+            mappings.append(value)
+        torch_rng_state = payload.get("torch_rng_state")
+        if not isinstance(torch_rng_state, torch.Tensor):
+            raise ValueError("checkpoint torch RNG state is invalid")
+        cuda_rng_state = payload.get("cuda_rng_state")
+        if cuda_rng_state is not None and (
+            not isinstance(cuda_rng_state, list | tuple)
+            or not all(isinstance(value, torch.Tensor) for value in cuda_rng_state)
+        ):
+            raise ValueError("checkpoint CUDA RNG state is invalid")
+        numpy_rng_state = payload.get("numpy_rng_state")
+        if numpy_rng_state is not None and not isinstance(numpy_rng_state, dict):
+            raise ValueError("checkpoint NumPy RNG state is invalid")
+        return cls(
+            summary,
+            mappings[0],
+            mappings[1],
+            mappings[2],
+            torch_rng_state,
+            None if cuda_rng_state is None else list(cuda_rng_state),
+            numpy_rng_state,
+        )
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        config_json: str,
+        config_sha256: str,
+        learner_state: dict[str, Any],
+        data_identity: LearnerDataIdentity | None,
+        fast_state: dict[str, Any],
+        slow_state: dict[str, Any],
+        optimizer_state: dict[str, Any],
+        torch_rng_state: torch.Tensor,
+        cuda_rng_state: list[torch.Tensor] | None,
+        numpy_rng_state: Mapping[str, Any] | None,
+    ) -> CheckpointPayload:
+        wire = {
+            "checkpoint_schema_version": MODEL_ARTIFACT_SCHEMA.current,
+            "config_json": config_json,
+            "config_sha256": config_sha256,
+            "learner_state": learner_state,
+            "data_identity": None if data_identity is None else asdict(data_identity),
+            "fast_state": fast_state,
+            "slow_state": slow_state,
+            "optimizer_state": optimizer_state,
+            "torch_rng_state": torch_rng_state,
+            "cuda_rng_state": cuda_rng_state,
+            "numpy_rng_state": numpy_rng_state,
+        }
+        return cls.from_payload(wire)
+
+    def to_payload(self) -> dict[str, Any]:
+        identity = self.summary.identity
+        return {
+            "checkpoint_schema_version": MODEL_ARTIFACT_SCHEMA.current,
+            "config_json": identity.config_json,
+            "config_sha256": identity.config_sha256,
+            "learner_state": dict(self.summary.learner_state),
+            "data_identity": (
+                None if self.summary.data_identity is None else asdict(self.summary.data_identity)
+            ),
+            "fast_state": self.fast_state,
+            "slow_state": self.slow_state,
+            "optimizer_state": self.optimizer_state,
+            "torch_rng_state": self.torch_rng_state,
+            "cuda_rng_state": self.cuda_rng_state,
+            "numpy_rng_state": self.numpy_rng_state,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PublicationSummary:
     identity: ModelArtifactIdentity
 
     @classmethod
-    def from_payload(cls, payload: object) -> "PublicationSummary":
+    def from_payload(cls, payload: object) -> PublicationSummary:
         if not isinstance(payload, dict):
             raise ValueError("publication payload is invalid")
         return cls(
@@ -124,12 +222,8 @@ def _artifact_identity(
 ) -> ModelArtifactIdentity:
     if not isinstance(run_id, str) or not run_id:
         raise ValueError(f"{artifact} run identity is invalid")
-    for name, value in (
-        ("optimizer step", optimizer_step),
-        ("samples seen", samples_seen),
-    ):
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ValueError(f"{artifact} {name} is invalid")
+    optimizer_step_value = _nonnegative_int(optimizer_step, "optimizer step", artifact)
+    samples_seen_value = _nonnegative_int(samples_seen, "samples seen", artifact)
     if not isinstance(config_json, str) or not isinstance(config_sha256, str):
         raise ValueError(f"{artifact} configuration metadata is invalid")
     digest = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
@@ -137,8 +231,14 @@ def _artifact_identity(
         raise ValueError(f"{artifact} configuration SHA-256 does not match")
     return ModelArtifactIdentity(
         run_id=run_id,
-        optimizer_step=optimizer_step,
-        samples_seen=samples_seen,
+        optimizer_step=optimizer_step_value,
+        samples_seen=samples_seen_value,
         config_json=config_json,
         config_sha256=config_sha256,
     )
+
+
+def _nonnegative_int(value: object, name: str, artifact: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{artifact} {name} is invalid")
+    return value

@@ -2,22 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
-import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from zero_ttt._io import atomic_write_json, sha256_file
 from zero_ttt.versioning import SOURCE_MANIFEST_SCHEMA
-
-
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +56,7 @@ class SourceManifest:
         license_url: str,
         source_root: str | Path,
         pattern: str,
-    ) -> "SourceManifest":
+    ) -> SourceManifest:
         root = Path(source_root).resolve()
         assets = []
         for path in sorted(root.glob(pattern)):
@@ -89,27 +79,10 @@ class SourceManifest:
         )
 
     def save(self, path: str | Path) -> None:
-        destination = Path(path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            dir=destination.parent,
-        )
-        temporary = Path(temporary_name)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-                json.dump(asdict(self), handle, ensure_ascii=False, indent=2, sort_keys=True)
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, destination)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
+        atomic_write_json(path, asdict(self), indent=2)
 
     @classmethod
-    def load(cls, path: str | Path) -> "SourceManifest":
+    def load(cls, path: str | Path) -> SourceManifest:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         SOURCE_MANIFEST_SCHEMA.require(raw.get("schema_version"))
         assets = tuple(ManifestAsset(**item) for item in raw.pop("assets"))

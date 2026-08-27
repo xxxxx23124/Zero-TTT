@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint
@@ -41,12 +43,15 @@ class BlockExecutor:
         )
         if not should_checkpoint:
             return self._run(block, rope, plugin, hidden)
-        return checkpoint(
-            self._run,
-            block,
-            rope,
-            plugin,
-            hidden,
-            use_reentrant=False,
-            preserve_rng_state=True,
+        return cast(
+            BlockOutput,
+            checkpoint(
+                self._run,
+                block,
+                rope,
+                plugin,
+                hidden,
+                use_reentrant=False,
+                preserve_rng_state=True,
+            ),
         )

@@ -26,19 +26,30 @@ def update_slow_weights(
     fast_parameters = dict(fast.named_parameters())
     slow_buffers = dict(slow.named_buffers())
     fast_buffers = dict(fast.named_buffers())
-    if slow_parameters.keys() != fast_parameters.keys() or slow_buffers.keys() != fast_buffers.keys():
+    if (
+        slow_parameters.keys() != fast_parameters.keys()
+        or slow_buffers.keys() != fast_buffers.keys()
+    ):
         raise ValueError("fast and slow model structures do not match")
     for name, slow_tensor in slow_parameters.items():
-        fast_tensor = fast_parameters[name].detach().to(
-            device=slow_tensor.device,
-            dtype=slow_tensor.dtype,
+        fast_tensor = (
+            fast_parameters[name]
+            .detach()
+            .to(
+                device=slow_tensor.device,
+                dtype=slow_tensor.dtype,
+            )
         )
         slow_tensor.mul_(decay).add_(fast_tensor, alpha=1.0 - decay)
     # RoPE frequencies and other persistent buffers are state, not learned weights.
     for name, slow_tensor in slow_buffers.items():
-        fast_tensor = fast_buffers[name].detach().to(
-            device=slow_tensor.device,
-            dtype=slow_tensor.dtype,
+        fast_tensor = (
+            fast_buffers[name]
+            .detach()
+            .to(
+                device=slow_tensor.device,
+                dtype=slow_tensor.dtype,
+            )
         )
         slow_tensor.copy_(fast_tensor)
     return decay

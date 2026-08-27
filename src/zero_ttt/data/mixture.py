@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
-import os
 import re
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
-from zero_ttt.data.catalog_source import CatalogBatchSource
+from zero_ttt._io import atomic_write_json, canonical_json_bytes, sha256_bytes
+from zero_ttt.data.catalog_source import CatalogBatchSource, TrajectoryBatchMaterializer
 from zero_ttt.data.contracts import TrainBatch
+from zero_ttt.data.shards import ShardStore
 from zero_ttt.versioning import TRAINING_MIXTURE_SCHEMA
 
 
@@ -55,32 +54,17 @@ class TrainingMixtureManifest:
         }
 
     def compute_sha256(self) -> str:
-        encoded = json.dumps(
-            self._payload(), sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
+        return sha256_bytes(canonical_json_bytes(self._payload()))
 
     def save(self, path: str | Path) -> None:
-        destination = Path(path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             **self._payload(),
             "content_sha256": self.content_sha256,
         }
-        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-                json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, destination)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
+        atomic_write_json(path, payload)
 
     @classmethod
-    def load(cls, path: str | Path) -> "TrainingMixtureManifest":
+    def load(cls, path: str | Path) -> TrainingMixtureManifest:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("invalid training mixture manifest")
@@ -112,6 +96,8 @@ class MixtureBatchSource:
         shard_cache_size: int = 4,
     ) -> None:
         self.manifest = manifest
+        store = ShardStore(store_root)
+        materializer = TrajectoryBatchMaterializer(store, shard_cache_size)
         sources = []
         try:
             for component in manifest.components:
@@ -121,6 +107,8 @@ class MixtureBatchSource:
                         store_root,
                         component.snapshot_id,
                         shard_cache_size=shard_cache_size,
+                        _store=store,
+                        _materializer=materializer,
                     )
                 )
         except BaseException:
@@ -132,16 +120,12 @@ class MixtureBatchSource:
             [component.weight for component in manifest.components], dtype=np.float64
         )
         self.weights = weights / weights.sum()
-        identity = json.dumps(
-            {
-                "manifest_sha256": manifest.content_sha256,
-                "source_sampling": [source.sampling_config_sha256 for source in self.sources],
-                "microbatch_component_selection": "weighted-with-replacement-v1",
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        self.sampling_config_sha256 = hashlib.sha256(identity).hexdigest()
+        identity = {
+            "manifest_sha256": manifest.content_sha256,
+            "source_sampling": [source.sampling_config_sha256 for source in self.sources],
+            "microbatch_component_selection": "weighted-with-replacement-v1",
+        }
+        self.sampling_config_sha256 = sha256_bytes(canonical_json_bytes(identity))
         self.component_snapshot_ids = tuple(
             component.snapshot_id for component in manifest.components
         )
@@ -154,7 +138,7 @@ class MixtureBatchSource:
         for source in self.sources:
             source.close()
 
-    def __enter__(self) -> "MixtureBatchSource":
+    def __enter__(self) -> MixtureBatchSource:
         return self
 
     def __exit__(self, *_: object) -> None:

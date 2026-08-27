@@ -3,25 +3,17 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 from pathlib import Path
 
 import torch
 
+from zero_ttt._io import sha256_file
 from zero_ttt.config import model_config_from_mapping
 from zero_ttt.inference.contracts import InferenceBatch, InferenceOutput
 from zero_ttt.model import PolicyValueTransformer
 from zero_ttt.model.transformer import eager_execution_config
 from zero_ttt.training.checkpoint import CheckpointManager
-
-
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 class PublicationPositionEvaluator:
@@ -56,9 +48,7 @@ class PublicationPositionEvaluator:
         if incompatible.missing_keys or incompatible.unexpected_keys:
             raise ValueError("publication state does not match its model configuration")
         self._model = (
-            torch.compile(model, dynamic=False, mode=compile_mode)
-            if compile_model
-            else model
+            torch.compile(model, dynamic=False, mode=compile_mode) if compile_model else model
         )
         self._model_version = (
             f"{payload.get('run_id', 'unknown')}:{int(payload['model_version'])}:"
@@ -86,9 +76,7 @@ class PublicationPositionEvaluator:
             legal = torch.cat((legal, legal[-1:].expand(padding, -1)), dim=0)
 
         board = board.to(self.device, non_blocking=self.device.type == "cuda")
-        global_features = global_features.to(
-            self.device, non_blocking=self.device.type == "cuda"
-        )
+        global_features = global_features.to(self.device, non_blocking=self.device.type == "cuda")
         legal = legal.to(self.device, non_blocking=self.device.type == "cuda")
         autocast = (
             torch.autocast(device_type="cuda", dtype=torch.bfloat16)

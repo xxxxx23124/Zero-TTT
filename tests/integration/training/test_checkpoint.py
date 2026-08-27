@@ -36,9 +36,7 @@ def test_publications_are_immutable_run_scoped_and_retained(tmp_path) -> None:
     assert latest.exists()
     assert manager.current_publication() == latest
     pointer = json.loads((manager.publication_dir / "current.json").read_text(encoding="utf-8"))
-    publication_metadata = json.loads(
-        (latest.parent / "metadata.json").read_text(encoding="utf-8")
-    )
+    publication_metadata = json.loads((latest.parent / "metadata.json").read_text(encoding="utf-8"))
     assert pointer["schema_version"] == MODEL_ARTIFACT_SCHEMA.current
     assert publication_metadata["schema_version"] == MODEL_ARTIFACT_SCHEMA.current
     loaded = manager.load_publication(latest)
@@ -47,6 +45,14 @@ def test_publications_are_immutable_run_scoped_and_retained(tmp_path) -> None:
     assert manager.save_publication("run-a", 3, 12, state, metadata) == latest
     with pytest.raises(FileExistsError, match="conflicting"):
         manager.save_publication("run-a", 3, 16, state, metadata)
+    with pytest.raises(FileExistsError, match="conflicting"):
+        manager.save_publication(
+            "run-a",
+            3,
+            12,
+            {"weight": torch.zeros(1)},
+            metadata,
+        )
 
 
 def test_legacy_current_pt_is_not_a_publication_pointer(tmp_path) -> None:

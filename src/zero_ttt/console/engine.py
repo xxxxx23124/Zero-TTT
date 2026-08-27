@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import json
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-import numpy as np
-
 from zero_ttt.config import ExperimentConfig, load_config
-from zero_ttt.console.artifacts import ArtifactCoordinator, PublishedArtifacts
 from zero_ttt.console.config import ConsoleConfig
 from zero_ttt.console.planning import TrainingDataPlan, TrainingDataPlanner
 from zero_ttt.console.runtime import RuntimeBudget, SoftStopSignals
@@ -31,8 +27,10 @@ from zero_ttt.console.status import (
 )
 from zero_ttt.data.catalog import Catalog
 from zero_ttt.data.shards import ShardStore
-from zero_ttt.learner import Learner
+from zero_ttt.training.artifacts import ArtifactCoordinator, PublishedArtifacts
 from zero_ttt.training.checkpoint import CheckpointManager
+from zero_ttt.training.contracts import LearnerDataIdentity
+from zero_ttt.training.session import TrainingSession
 
 
 class TrainingConsole:
@@ -90,7 +88,7 @@ class TrainingConsole:
         ready = transition(stopping, Operation.READY)
         self._save_state(dataclasses.replace(ready, last_outcome=outcome))
 
-    def _fail(self, error: BaseException) -> None:
+    def _fail(self, error: Exception) -> None:
         try:
             failed = transition(self.state, Operation.FAILED)
         except ValueError:
@@ -102,81 +100,61 @@ class TrainingConsole:
     def _catalog(self) -> Catalog:
         return Catalog(self.settings.catalog_path, ShardStore(self.settings.store_root))
 
+    def _validate_reconcile_inputs(self) -> None:
+        if not self.settings.catalog_path.is_file():
+            raise FileNotFoundError(f"catalog does not exist: {self.settings.catalog_path}")
+        if not self.settings.store_root.is_dir():
+            raise FileNotFoundError(f"shard store does not exist: {self.settings.store_root}")
+        with self._catalog() as catalog:
+            cold = catalog.snapshot_statistics(self.settings.cold_start_snapshot_id)
+        if cold.games <= 0 or cold.positions <= 0:
+            raise ValueError("configured cold-start snapshot contains no trainable data")
+
+    def _checkpoint_phase(self, checkpoint) -> TrainingPhase:
+        if checkpoint is None:
+            return TrainingPhase.COLD_START
+        self.artifacts.validate_checkpoint(checkpoint)
+        identity = checkpoint.summary.data_identity
+        if identity is None:
+            raise ValueError("console checkpoint must have a training data identity")
+        if not identity.mixture_manifest_sha256:
+            if identity.snapshot_id != self.settings.cold_start_snapshot_id:
+                raise ValueError("cold-start checkpoint uses a different snapshot")
+            return TrainingPhase.COLD_START
+        if self.settings.cold_start_snapshot_id not in identity.component_snapshot_ids:
+            raise ValueError("mixture checkpoint does not contain the configured cold snapshot")
+        with self._catalog() as catalog:
+            selfplay_components = [
+                snapshot_id
+                for snapshot_id in identity.component_snapshot_ids
+                if catalog.snapshot_statistics(snapshot_id).source_kind == "selfplay"
+            ]
+        if len(selfplay_components) != 1:
+            raise ValueError("mixture checkpoint must contain one self-play snapshot")
+        return TrainingPhase.MIXTURE
+
+    def _recovery_outcome(self) -> str:
+        outcome = self.state.last_outcome
+        if self.state.operation not in {Operation.READY, Operation.FAILED}:
+            return (f"recovered interrupted {self.state.operation.value}; {outcome}").strip("; ")
+        if self.state.operation is Operation.FAILED:
+            return f"validated after previous failure; {outcome}".strip("; ")
+        return outcome
+
     def reconcile(self) -> None:
         try:
-            if not self.settings.catalog_path.is_file():
-                raise FileNotFoundError(
-                    f"catalog does not exist: {self.settings.catalog_path}"
-                )
-            if not self.settings.store_root.is_dir():
-                raise FileNotFoundError(
-                    f"shard store does not exist: {self.settings.store_root}"
-                )
-            with self._catalog() as catalog:
-                cold = catalog.snapshot_statistics(
-                    self.settings.cold_start_snapshot_id
-                )
-                if cold.games <= 0 or cold.positions <= 0:
-                    raise ValueError(
-                        "configured cold-start snapshot contains no trainable data"
-                    )
-
+            self._validate_reconcile_inputs()
             inspection = self.artifacts.inspect()
-            inferred_phase = TrainingPhase.COLD_START
-            if inspection.checkpoint is not None:
-                self.artifacts.validate_checkpoint(inspection.checkpoint)
-                identity = inspection.checkpoint.summary.data_identity
-                if identity is None:
-                    raise ValueError(
-                        "console checkpoint must have a training data identity"
-                    )
-                if identity.mixture_manifest_sha256:
-                    if (
-                        self.settings.cold_start_snapshot_id
-                        not in identity.component_snapshot_ids
-                    ):
-                        raise ValueError(
-                            "mixture checkpoint does not contain the configured "
-                            "cold snapshot"
-                        )
-                    with self._catalog() as catalog:
-                        selfplay_components = [
-                            snapshot_id
-                            for snapshot_id in identity.component_snapshot_ids
-                            if catalog.snapshot_statistics(snapshot_id).source_kind
-                            == "selfplay"
-                        ]
-                    if len(selfplay_components) != 1:
-                        raise ValueError(
-                            "mixture checkpoint must contain one self-play snapshot"
-                        )
-                    inferred_phase = TrainingPhase.MIXTURE
-                elif identity.snapshot_id != self.settings.cold_start_snapshot_id:
-                    raise ValueError("cold-start checkpoint uses a different snapshot")
-
+            inferred_phase = self._checkpoint_phase(inspection.checkpoint)
             self.artifacts.reconcile(inspection)
-            interrupted = self.state.operation not in {
-                Operation.READY,
-                Operation.FAILED,
-            }
-            recovered_failure = self.state.operation is Operation.FAILED
-            outcome = self.state.last_outcome
-            if interrupted:
-                outcome = (
-                    f"recovered interrupted {self.state.operation.value}; "
-                    f"{outcome}"
-                )
-                outcome = outcome.strip("; ")
-            elif recovered_failure:
-                outcome = f"validated after previous failure; {outcome}".strip("; ")
             reconciled = dataclasses.replace(
                 self.state,
                 phase=inferred_phase,
                 operation=Operation.READY,
-                last_outcome=outcome,
+                last_outcome=self._recovery_outcome(),
             )
             self._save_state(reconciled)
-        except BaseException as error:
+        except Exception as error:
             self._fail(error)
             raise
 
@@ -214,9 +192,7 @@ class TrainingConsole:
         self.output(f"self-play snapshot: {status.selfplay_snapshot_id or '-'}")
         self.output(f"mixture: {status.mixture_manifest_sha256 or '-'}")
         if status.last_operation or status.last_outcome:
-            self.output(
-                f"上一轮: {status.last_operation or '-'} / {status.last_outcome or '-'}"
-            )
+            self.output(f"上一轮: {status.last_operation or '-'} / {status.last_outcome or '-'}")
 
     @staticmethod
     def _round_seed(base_seed: int, round_number: int) -> int:
@@ -235,59 +211,26 @@ class TrainingConsole:
             if publication is None:
                 raise RuntimeError("data collection requires a published model")
 
-            from zero_ttt.game.features import FEATURE_SCHEMA_ID
-            from zero_ttt.game.rules import RULES_ID
-            from zero_ttt.inference import (
-                BatchedInferenceBroker,
-                PublicationPositionEvaluator,
-            )
-            from zero_ttt.selfplay.collector import (
-                SelfPlayCollector,
-                search_config_sha256,
-            )
+            from zero_ttt.selfplay.service import SelfPlayService
 
-            evaluator = PublicationPositionEvaluator(
+            service = SelfPlayService(
+                self.config,
                 publication,
-                device=self.config.runtime.device,
-                inference_batch_size=self.config.selfplay.inference_batch_size,
-                compile_model=self.config.selfplay.compile_inference,
-                compile_mode=self.config.execution.compile_mode,
+                store_root=self.settings.store_root,
+                catalog_path=self.settings.catalog_path,
             )
-            search_hash = search_config_sha256(self.config)
-            evaluator_id = hashlib.sha256(
-                json.dumps(
-                    [evaluator.model_version, FEATURE_SCHEMA_ID, RULES_ID, search_hash],
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest()
             with (
                 SoftStopSignals() as signals,
-                BatchedInferenceBroker(
-                    evaluator,
-                    batch_size=self.config.selfplay.inference_batch_size,
-                    batch_wait_ms=self.config.selfplay.batch_wait_ms,
-                    cache_size=self.config.selfplay.inference_cache_size,
-                ) as broker,
+                service,
             ):
                 while not budget.expired and not signals.requested:
                     round_number = self.state.next_collection_round
-                    summary = SelfPlayCollector(
-                        self.config,
-                        broker,
-                        publication_sha256=evaluator.publication_sha256,
-                        evaluator_id=evaluator_id,
-                        store_root=self.settings.store_root,
-                        catalog_path=self.settings.catalog_path,
+                    summary = service.collect(
                         games=self.config.selfplay.actor_count,
                         seed=self._round_seed(self.config.seed, round_number),
-                    ).collect()
-                    if (
-                        summary.collected_games + summary.skipped_games
-                        != summary.requested_games
-                    ):
-                        raise RuntimeError(
-                            "self-play round did not finish all requested games"
-                        )
+                    )
+                    if summary.collected_games + summary.skipped_games != summary.requested_games:
+                        raise RuntimeError("self-play round did not finish all requested games")
                     rounds += 1
                     games += summary.collected_games
                     self._save_state(
@@ -302,98 +245,106 @@ class TrainingConsole:
                         )
                     )
             self._finish(f"soft-stopped after {rounds} rounds and {games} new games")
-        except BaseException as error:
+        except Exception as error:
             self._fail(error)
             raise
 
-    def train(self, *, warm_start: bool = False) -> None:
+    def _validate_warm_start(self, warm_start: bool) -> None:
         if warm_start and self.state.phase is not TrainingPhase.COLD_START:
             raise RuntimeError("warm-start is only available in COLD_START")
-        if warm_start:
-            if self.manager.latest_checkpoint() is None:
-                raise RuntimeError("warm-start requires a full cold-start checkpoint")
-            with self._catalog() as catalog:
-                if catalog.selfplay_statistics().games <= 0:
-                    raise RuntimeError(
-                        "warm-start requires at least one sealed self-play game"
-                    )
+        if not warm_start:
+            return
+        if self.manager.latest_checkpoint() is None:
+            raise RuntimeError("warm-start requires a full cold-start checkpoint")
+        with self._catalog() as catalog:
+            games = catalog.selfplay_statistics().games
+        if games <= 0:
+            raise RuntimeError("warm-start requires at least one sealed self-play game")
+
+    def _training_session(
+        self, plan: TrainingDataPlan, use_mixture: bool
+    ) -> tuple[TrainingSession, LearnerDataIdentity | None]:
+        session = TrainingSession(
+            self.config,
+            self.manager,
+            data_identity=plan.identity,
+            artifacts=self.artifacts,
+        )
+        checkpoint = self.artifacts.inspect().checkpoint
+        if checkpoint is None:
+            if use_mixture:
+                raise RuntimeError("warm-start/mixture training requires a full checkpoint")
+            return session, None
+        self.artifacts.validate_checkpoint(checkpoint)
+        if checkpoint.summary.data_identity == plan.identity:
+            session.restore(checkpoint.path)
+            return session, None
+        if not use_mixture:
+            raise ValueError("cold-start checkpoint data identity changed unexpectedly")
+        previous = session.restore(checkpoint.path, allow_data_transition=True)
+        return session, previous
+
+    @staticmethod
+    def _train_until_stop(
+        session: TrainingSession,
+        plan: TrainingDataPlan,
+        budget: RuntimeBudget,
+    ) -> tuple[int, PublishedArtifacts | None]:
+        steps = 0
+        last_published = None
+        with SoftStopSignals() as signals:
+            while not budget.expired and not signals.requested:
+                session.step(plan.source)
+                steps += 1
+                if session.publication_due:
+                    last_published = session.publish()
+        return steps, last_published
+
+    @staticmethod
+    def _current_publication(
+        session: TrainingSession, last_published: PublishedArtifacts | None
+    ) -> PublishedArtifacts:
+        state = session.learner.state
+        if (
+            last_published is not None
+            and state.last_published_step == state.optimizer_step
+            and state.last_published_samples == state.samples_seen
+        ):
+            return last_published
+        return session.publish()
+
+    def _record_training_transition(
+        self,
+        plan: TrainingDataPlan,
+        previous: LearnerDataIdentity | None,
+        warm_start: bool,
+    ) -> None:
+        state = dataclasses.replace(self.state, phase=plan.target_phase)
+        if previous is not None and plan.mixture_manifest is not None:
+            reason = "warm_start" if warm_start else "mixture_rollover"
+            record = migration_record(
+                reason,
+                previous.snapshot_id,
+                plan.selfplay_snapshot_id,
+                plan.mixture_manifest.content_sha256,
+            )
+            state = dataclasses.replace(state, migrations=(*state.migrations, record))
+        self._save_state(state)
+
+    def train(self, *, warm_start: bool = False) -> None:
+        self._validate_warm_start(warm_start)
         operation = Operation.WARM_STARTING if warm_start else Operation.TRAINING
         self._begin(operation)
-        steps = 0
         plan: TrainingDataPlan | None = None
-        last_published: PublishedArtifacts | None = None
         try:
             budget = RuntimeBudget(self.settings.max_runtime_seconds, self.clock)
             use_mixture = warm_start or self.state.phase is TrainingPhase.MIXTURE
             plan = self.data_planner.build(use_mixture=use_mixture)
-
-            rng = np.random.default_rng(self.config.seed)
-            learner = Learner(
-                self.config,
-                self.manager,
-                data_identity=plan.identity,
-            )
-            inspection = self.artifacts.inspect()
-            checkpoint = inspection.checkpoint
-            previous_identity = None
-            if checkpoint is not None:
-                self.artifacts.validate_checkpoint(checkpoint)
-                stored_identity = checkpoint.summary.data_identity
-                if stored_identity == plan.identity:
-                    learner.restore(checkpoint.path, rng)
-                else:
-                    if not use_mixture:
-                        raise ValueError(
-                            "cold-start checkpoint data identity changed unexpectedly"
-                        )
-                    previous_identity = learner.restore_for_data_transition(
-                        checkpoint.path, rng
-                    )
-            elif use_mixture:
-                raise RuntimeError(
-                    "warm-start/mixture training requires a full checkpoint"
-                )
-
-            with SoftStopSignals() as signals:
-                while not budget.expired and not signals.requested:
-                    learner.train_optimizer_step(plan.source, rng)
-                    steps += 1
-                    if learner.publication_due:
-                        last_published = self.artifacts.publish_learner(learner, rng)
-
+            session, previous_identity = self._training_session(plan, use_mixture)
+            steps, last_published = self._train_until_stop(session, plan, budget)
             if steps > 0:
-                if (
-                    last_published is not None
-                    and learner.state.last_published_step
-                    == learner.state.optimizer_step
-                    and learner.state.last_published_samples
-                    == learner.state.samples_seen
-                ):
-                    published = last_published
-                else:
-                    published = self.artifacts.publish_learner(learner, rng)
-                state = dataclasses.replace(
-                    self.state,
-                    phase=plan.target_phase,
-                )
-                if (
-                    previous_identity is not None
-                    and plan.mixture_manifest is not None
-                ):
-                    reason = "warm_start" if warm_start else "mixture_rollover"
-                    state = dataclasses.replace(
-                        state,
-                        migrations=state.migrations
-                        + (
-                            migration_record(
-                                reason,
-                                previous_identity.snapshot_id,
-                                plan.selfplay_snapshot_id,
-                                plan.mixture_manifest.content_sha256,
-                            ),
-                        ),
-                    )
-                self._save_state(state)
+                published = self._current_publication(session, last_published)
+                self._record_training_transition(plan, previous_identity, warm_start)
                 outcome = (
                     f"soft-stopped after {steps} optimizer steps; "
                     f"checkpoint={published.checkpoint_path.name}; "
@@ -402,7 +353,7 @@ class TrainingConsole:
             else:
                 outcome = "runtime budget expired before an optimizer step started"
             self._finish(outcome)
-        except BaseException as error:
+        except Exception as error:
             self._fail(error)
             raise
         finally:
@@ -414,9 +365,7 @@ class TrainingConsole:
             self.reconcile()
             while True:
                 self.print_status()
-                self.output(
-                    "\n1) 刷新状态  2) 收集数据  3) 开始训练  4) warm-start  5) 退出"
-                )
+                self.output("\n1) 刷新状态  2) 收集数据  3) 开始训练  4) warm-start  5) 退出")
                 try:
                     choice = self.input("请选择: ").strip()
                 except (EOFError, KeyboardInterrupt):
@@ -435,6 +384,6 @@ class TrainingConsole:
                         return 0
                     else:
                         self.output("无效选择。")
-                except BaseException as error:
+                except Exception as error:
                     self.output(f"控制台操作失败: {type(error).__name__}: {error}")
                     return 1

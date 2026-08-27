@@ -16,11 +16,7 @@ class SchemaSpec:
     rebuild_hint: str
 
     def require(self, actual: object) -> None:
-        if (
-            isinstance(actual, bool)
-            or not isinstance(actual, int)
-            or actual != self.current
-        ):
+        if isinstance(actual, bool) or not isinstance(actual, int) or actual != self.current:
             raise UnsupportedSchemaError(
                 f"incompatible {self.name} schema {actual!r}; expected v{self.current}; "
                 f"{self.rebuild_hint}"

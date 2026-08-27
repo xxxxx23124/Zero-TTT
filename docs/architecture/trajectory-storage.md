@@ -32,6 +32,10 @@ Dirichlet epsilon 时为真。新 shard 只写 v4；旧 record、shard、catalog
 - trajectory 与 annotation 都有逻辑内容 SHA-256；snapshot 哈希这些内容身份而非 shard 路径，
   因而内容变化必然产生新 snapshot，纯物理重分片不会改变 snapshot ID。
 
+`TrajectoryShardSink` 是导入和自博弈共同使用的唯一累计/估算/封片路径。codec 只了解数组
+schema；store 不再了解 record 字段布局。读取时统一执行 schema、禁止 object array、文件
+SHA-256 和 record 内容身份四层校验。
+
 NPZ 与现有 NumPy/PyTorch 栈直接兼容；其基本语义见
 [NumPy NPZ](https://numpy.org/doc/stable/reference/generated/numpy.savez_compressed.html)。KataGo 的
 [自博弈训练说明](https://github.com/lightvector/KataGo/blob/master/SelfplayTraining.md)也采用
@@ -42,6 +46,12 @@ NPZ 分片，但本项目 schema 独立。
 SQLite 只保存分片路径、game/step offset、长度、来源、身份、任务、租约和校验信息，不保存
 大型训练 BLOB。replay 按总 step 数与磁盘字节数维护滑动窗口，只以完整棋局为单位淘汰；
 冷启动锚点、重要旧阶段 rehearsal 和正式评测棋局可标记 `pinned`。
+
+公开 `Catalog` 内部组合四个窄组件：连接与 PRAGMA 属于 `CatalogSession`，普通 SQL 写入属于
+`CatalogRepository`，确定性成员选择/哈希属于 `SnapshotService`，恢复与 GC 属于
+`ShardLifecycle`。GC 必须先在事务中写入 shard tombstone，之后才删除文件；若进程在两步间
+中断，下一次 `recover()` 完成删除。恢复只清理超过 24 小时安全时限的 `.shard-*.tmp`，不会
+删除仍可能属于活跃 writer 的临时文件。
 
 ## 棋力元数据
 
