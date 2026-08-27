@@ -51,6 +51,6 @@
 [分级教师](curriculum-teachers.md)的 400 局/Wilson 门槛后，才提升教师 profile 或预算。
 Human-SL 阶段只表示课程身份，不等同精确人类段位。
 
-序列存储见[数据契约](../architecture/trajectory-storage.md)，搜索边界见
-[OpenSpiel MCTS](../integrations/mcts-compatibility.md)，人工分阶段运行见
+序列存储见[数据契约](../../src/zero_ttt/data/trajectory-storage.md)，搜索边界见
+[OpenSpiel MCTS](../../src/zero_ttt/search/README.md)，人工分阶段运行见
 [Docker 训练控制台](../operations/training-console.md)。

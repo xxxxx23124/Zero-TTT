@@ -10,7 +10,6 @@
 - [模型与训练](architecture/model-and-training.md)
 - [Learner 与流程边界](architecture/learner-and-workflows.md)
 - [公共契约](architecture/contracts.md)
-- [序列化训练数据](architecture/trajectory-storage.md)
 - [Docker 运维](operations/docker.md)
 - [Docker 训练控制台](operations/training-console.md)
 
@@ -18,16 +17,26 @@
 
 - [统一训练生命周期](workflows/training-lifecycle.md)
 - [监督冷启动](workflows/offline-imitation.md)
-- [MCTS 学生自博弈](workflows/student-selfplay.md)
 - [主动选点与在线蒸馏](workflows/online-distillation.md)
 - [Human-SL 分级教师](workflows/curriculum-teachers.md)
 - [项目路线图](roadmap/README.md)
 
 ## 外部集成
 
-- [OpenSpiel MCTS](integrations/mcts-compatibility.md)
 - [KataGo](integrations/katago.md)
 - [局域网教师协议](integrations/lan-teacher.md)
+
+## 源码旁实现文档
+
+- [数据边界与采样](../src/zero_ttt/data/README.md)
+- [数据 Importer](../src/zero_ttt/data/importers/README.md)
+- [序列化训练数据](../src/zero_ttt/data/trajectory-storage.md)
+- [模型前向](../src/zero_ttt/model/README.md)
+- [Learner 与训练产物](../src/zero_ttt/training/README.md)
+- [Publication 推理与聚批](../src/zero_ttt/inference/README.md)
+- [OpenSpiel 搜索适配](../src/zero_ttt/search/README.md)
+- [MCTS 自博弈采集](../src/zero_ttt/selfplay/README.md)
+- [训练控制台内部编排](../src/zero_ttt/console/README.md)
 
 ## 未来研究
 
@@ -42,4 +51,5 @@
 - [开发日志](devlog/README.md)
 - [论文清单](../paper/README.md)
 
-用 `python scripts/check_docs.py` 检查大小和本地链接；该命令只作为 Docker 容器内命令维护。
+用 `python scripts/check_docs.py` 检查全局与源码旁文档的大小和本地链接；该命令只作为 Docker
+容器内命令维护。

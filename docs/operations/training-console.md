@@ -50,9 +50,9 @@ checkpoint 中的发布边界。相同 run 的 publication 超前或同 step 冲
 - Mixture 阶段每次训练都会从当前全部自博弈完整棋局创建新 snapshot；身份未变则严格 resume，
   有新棋局则执行显式数据身份迁移。
 
-控制台内部把产物恢复和 catalog 登记集中在 artifact coordinator，把 cold/mixture 数据源构造
-集中在 training-data planner；交互菜单只协调状态转换和执行边界。
-
 控制台状态写入 `runtime.run_dir/console/state.json`，mixture manifest 写入同目录的 `mixtures/`。
 模型与数据产物仍由原有 checkpoint、publication、shard 和 catalog 负责，控制台状态丢失时不得
 替代这些事实源。
+
+状态机、产物恢复、数据计划和软停止的实现约束见
+[源码旁控制台说明](../../src/zero_ttt/console/README.md)。

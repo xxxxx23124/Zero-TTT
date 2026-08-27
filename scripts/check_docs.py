@@ -1,14 +1,14 @@
-"""Enforce small Markdown files and valid local links under docs/."""
+"""Enforce small Markdown files and valid local links for repository documentation."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-
 MAX_LINES = 150
 MAX_BYTES = 12 * 1024
 LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+DOCUMENTATION_ROOTS = (Path("docs"), Path("src/zero_ttt"))
 
 
 def validate_docs(root: Path) -> list[str]:
@@ -33,10 +33,14 @@ def validate_docs(root: Path) -> list[str]:
 
 
 def main() -> None:
-    errors = validate_docs(Path("docs"))
+    errors = [error for root in DOCUMENTATION_ROOTS for error in validate_docs(root)]
     if errors:
         raise SystemExit("\n".join(errors))
-    print(f"Documentation checks passed ({MAX_LINES} lines, {MAX_BYTES} bytes per file).")
+    roots = ", ".join(str(root) for root in DOCUMENTATION_ROOTS)
+    print(
+        f"Documentation checks passed for {roots} "
+        f"({MAX_LINES} lines, {MAX_BYTES} bytes per file)."
+    )
 
 
 if __name__ == "__main__":

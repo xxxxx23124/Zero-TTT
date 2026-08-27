@@ -64,4 +64,5 @@ flowchart LR
 
 所有持久格式只接受[集中登记的当前版本](versioning.md)。旧运行产物不自动删除，也不提供迁移器。
 目标组件见 [Learner 与流程边界](learner-and-workflows.md)、
-[序列化训练数据](trajectory-storage.md)与[统一训练生命周期](../workflows/training-lifecycle.md)。
+[序列化训练数据](../../src/zero_ttt/data/trajectory-storage.md)与
+[统一训练生命周期](../workflows/training-lifecycle.md)。

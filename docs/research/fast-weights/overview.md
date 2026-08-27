@@ -24,5 +24,5 @@
 搜索结束后至多写入一次。一旦写入，旧树和 evaluator cache 失效。OpenSpiel 当前每着创建新
 根，天然符合默认清树策略；仍需隔离外部推理缓存。
 
-数据边界见[序列化训练数据](../../architecture/trajectory-storage.md)，风险与恢复标准见
+数据边界见[序列化训练数据](../../../src/zero_ttt/data/trajectory-storage.md)，风险与恢复标准见
 [实验与风险](evaluation.md)。

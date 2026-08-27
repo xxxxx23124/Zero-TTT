@@ -115,5 +115,5 @@ docker compose --profile katago run --rm katago-gtp
 - `docker compose down` 保留命名缓存卷；只有用户明确决定时才使用 `down --volumes`。
 - 不把下载密钥、局域网凭据或未经核验的许可证信息写入镜像。
 
-KataGo 网络管理见[集成说明](../integrations/katago.md)，未来数据布局见
-[序列化训练数据](../architecture/trajectory-storage.md)。
+KataGo 网络管理见[集成说明](../integrations/katago.md)，数据布局见
+[序列化训练数据](../../src/zero_ttt/data/trajectory-storage.md)。

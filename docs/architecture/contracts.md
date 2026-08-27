@@ -40,5 +40,5 @@ value 数组。一次搜索内 publication、特征 schema、规则和未来快�
 - `AnnotationRecord`：以 `(game_id, ply, teacher_fingerprint)` 连接的可追加教师标签。
 - `RatingSnapshot`：可选、评级池相关、带误差或 RD 的 agent 评测结果。
 
-物理格式、必备身份和淘汰规则见[序列化训练数据](trajectory-storage.md)。局域网任务与结果仍
+物理格式、必备身份和淘汰规则见[序列化训练数据](../../src/zero_ttt/data/trajectory-storage.md)。局域网任务与结果仍
 只有[文档协议](../integrations/lan-teacher.md)；Learner 永远不接触 KataGo 原始 JSON。

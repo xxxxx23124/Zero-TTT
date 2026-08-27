@@ -15,10 +15,10 @@
 | 采集流程 | 棋谱导入、MCTS 自博弈、KataGo 标注和课程调度 |
 | KataGo adapter | JSON/坐标/视角与 annotation 之间的转换 |
 
-`Learner` 不包含游戏、搜索、网络协议或调度；输入仍只有 `BatchSource`/`TrainBatch`。
-`TrainingSession` 统一 CLI 和控制台中的 learner 创建、恢复、step、checkpoint 与 publication。
-`SelfPlayService` 统一 publication evaluator 身份、broker 生命周期和 collector 初始化。采集器不得持有训练
-模型、优化器或 EMA 的 Python 引用。
+`Learner` 不包含游戏、搜索、网络协议或调度；输入仍只有 `BatchSource`/`TrainBatch`。采集器
+不得持有训练模型、优化器或 EMA 的 Python 引用。具体实现分别见
+[训练包](../../src/zero_ttt/training/README.md)与
+[自博弈包](../../src/zero_ttt/selfplay/README.md)。
 
 ## 数据交接
 
@@ -34,7 +34,7 @@ SQLite 只承担索引、任务、租约和校验控制，不保存大型训练 
 - 原始文件哈希或自博弈任务身份，以及分片 SHA-256。
 
 失败、缺失必需身份或校验不一致的数据不能静默混入。完整规范见
-[序列化训练数据](trajectory-storage.md)。
+[序列化训练数据](../../src/zero_ttt/data/trajectory-storage.md)。
 
 ## 模型与显存所有权
 
@@ -52,8 +52,6 @@ microbatch 16 跑到峰值 `14.246 GiB reserved`；生产配置把梯度累积�
 要求，但不会改变上述职责边界。
 
 Docker 控制台位于独立 `zero_ttt.console` 包中；底层模块不导入它。普通 checkpoint restore
-继续严格绑定数据身份，只有控制台显式滚动不可变 snapshot 时才调用保留完整训练状态的数据
-迁移入口。共享的训练产物契约负责 checkpoint/publication 身份解析；`training.artifacts`
-中的 coordinator 负责幂等恢复与登记（旧 `console.artifacts` 仅兼容重导出），training-data
-planner 负责 cold/mixture 数据计划。控制台的
-JSON 状态用于菜单与审计，checkpoint、catalog 和不可变产物仍是事实源。
+严格绑定数据身份，只有显式滚动不可变 snapshot 时才允许保留完整训练状态的数据迁移。
+checkpoint、Catalog 和不可变产物始终是事实源；控制台状态只用于编排与审计。内部状态机和
+恢复规则见[控制台包说明](../../src/zero_ttt/console/README.md)。

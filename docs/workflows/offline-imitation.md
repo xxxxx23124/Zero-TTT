@@ -14,10 +14,6 @@
    覆盖所有局面。
 6. 封存不可变 NPZ trajectory/annotation 分片，再由 `BatchSource` 产生 `TrainBatch`。
 
-当前离线源按 eligible position 数加权选择一个 shard，并在该 shard 内采满一个 microbatch。
-这保持单个 position 的均匀边际概率，同时避免一次 microbatch 反复读取多个 128 MiB shard；
-batch 内相关性由梯度累积期间的多次 shard 选择分散。
-
 普通棋谱只有实战落子时，policy 可以 one-hot，但必须标记来源。有教师分布时也保留教师
 指纹、预算和有效 mask；缺失辅助标签不能填成假零值。
 
@@ -33,4 +29,5 @@ batch 内相关性由梯度累积期间的多次 shard 选择分散。
 `snapshot-create` 和 `offline-imitation`。g170 rich NPZ 因旧 SGF 缺少可靠连接键暂不接入。
 
 来源 rank、平台和评级体系原样保存，不自动换算成统一 Elo。完整强度元数据规则见
-[序列化训练数据](../architecture/trajectory-storage.md)。
+[序列化训练数据](../../src/zero_ttt/data/trajectory-storage.md)，当前 shard-local microbatch 算法见
+[数据包说明](../../src/zero_ttt/data/README.md)。

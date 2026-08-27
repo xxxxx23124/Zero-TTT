@@ -23,7 +23,7 @@
 - 早期使用截断反向传播和明确梯度开关，先控制显存。
 
 训练目标仍是后续 policy/value/score；不能只做状态自重建便假设棋力提升。序列分片契约见
-[持久数据设计](../../architecture/trajectory-storage.md)。
+[持久数据设计](../../../src/zero_ttt/data/trajectory-storage.md)。
 
 ## 首要问题
 
