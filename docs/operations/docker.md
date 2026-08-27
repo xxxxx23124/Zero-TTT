@@ -56,7 +56,8 @@ docker compose -f compose.yaml -f compose.data.yaml run --rm dev zero-ttt snapsh
 ```
 
 `snapshot-create` 输出不可变 snapshot ID。把该 ID 传给 `offline-imitation --snapshot`；正式运行
-前应在配置中把 `runtime.run_dir` 指向持久写入位置。本仓库不自动启动全量导入或长期训练。
+前应在配置中把 `runtime.run_dir` 指向持久写入位置。全量导入仍须显式执行；手动长期训练可由
+[Docker 训练控制台](training-console.md)编排，但不会无人值守地自动交替阶段。
 
 当前新写入格式为 record/shard/catalog v4，配置与 checkpoint/publication 为 v6；其余内部格式见
 [版本矩阵](../architecture/versioning.md)。读取器只接受精确当前版本，旧 full checkpoint 不能

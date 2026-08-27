@@ -67,6 +67,16 @@ SELFPLAY_TASK_SCHEMA = SchemaSpec(
     2,
     "recollect the self-play task",
 )
+CONSOLE_CONFIG_SCHEMA = SchemaSpec(
+    "training console config",
+    1,
+    "rewrite configs/console.toml from the current template",
+)
+CONSOLE_STATE_SCHEMA = SchemaSpec(
+    "training console state",
+    1,
+    "inspect the run artifacts and recreate only the console state file",
+)
 
 ALL_SCHEMAS = (
     EXPERIMENT_CONFIG_SCHEMA,
@@ -77,4 +87,6 @@ ALL_SCHEMAS = (
     SOURCE_MANIFEST_SCHEMA,
     TRAINING_MIXTURE_SCHEMA,
     SELFPLAY_TASK_SCHEMA,
+    CONSOLE_CONFIG_SCHEMA,
+    CONSOLE_STATE_SCHEMA,
 )

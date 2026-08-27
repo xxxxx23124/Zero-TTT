@@ -12,6 +12,7 @@
 - [公共契约](architecture/contracts.md)
 - [序列化训练数据](architecture/trajectory-storage.md)
 - [Docker 运维](operations/docker.md)
+- [Docker 训练控制台](operations/training-console.md)
 
 ## 数据采集与训练路线
 

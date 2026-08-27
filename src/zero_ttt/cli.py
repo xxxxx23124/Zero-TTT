@@ -32,6 +32,7 @@ def _add_config(child: argparse.ArgumentParser) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="zero-ttt")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("console", help="interactive Docker training console")
     for command in ("config-check", "model-smoke", "train-smoke"):
         _add_config(subparsers.add_parser(command))
 
@@ -339,6 +340,10 @@ def _selfplay_collect(arguments: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    if arguments.command == "console":
+        from zero_ttt.console import TrainingConsole, load_console_config
+
+        return TrainingConsole(load_console_config()).run_interactive()
     if arguments.command == "config-check":
         _config_check(arguments.config)
     elif arguments.command == "model-smoke":

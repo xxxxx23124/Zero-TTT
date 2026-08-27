@@ -76,3 +76,11 @@
 - **决定：** 一盘一逻辑 trajectory，多盘进入约 128 MiB immutable NPZ shard；annotation
   独立追加，SQLite 只做索引和控制。
 - **影响：** `strength` 非必填；agent 身份可验证，评级用可选 `RatingSnapshot`；按完整棋局淘汰。
+
+## D-039：Docker 交互式训练控制台
+
+- **状态：** 已接受
+- **决定：** 用独立状态机编排采集、训练和 cold→mixture warm-start；每个手动模式采用 8 小时
+  默认预算，并只在完整并发棋局组或 optimizer step 边界软停止。
+- **影响：** 控制台不接管 LR/MCTS；普通 resume 仍严格绑定数据身份，显式 snapshot 滚动才保留
+  完整训练状态进行迁移。无人值守自动交替阶段仍不在首版范围。

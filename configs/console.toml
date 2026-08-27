@@ -1,0 +1,7 @@
+# Replace this placeholder with the immutable train snapshot created for cold start.
+schema_version = 1
+experiment_config = "rtx4090l.toml"
+catalog_path = "/datasets/work/catalog/catalog.sqlite"
+store_root = "/datasets/work/processed"
+cold_start_snapshot_id = "0000000000000000000000000000000000000000000000000000000000000000"
+max_runtime_hours = 8.0

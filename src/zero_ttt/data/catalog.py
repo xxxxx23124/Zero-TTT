@@ -42,6 +42,24 @@ class AnnotationLocator:
     record_index: int
 
 
+@dataclass(frozen=True, slots=True)
+class SelfPlayStatistics:
+    sealed_tasks: int
+    collecting_tasks: int
+    failed_tasks: int
+    games: int
+    positions: int
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotStatistics:
+    snapshot_id: str
+    source_kind: str | None
+    task_id: str | None
+    games: int
+    positions: int
+
+
 class Catalog:
     def __init__(self, path: str | Path, store: ShardStore) -> None:
         self.path = Path(path)
@@ -219,7 +237,12 @@ class Catalog:
                 VALUES(?,?,?,?, 'verified')
                 ON CONFLICT(asset_sha256) DO UPDATE SET status='verified'
                 """,
-                (asset.sha256, manifest.dataset_id, asset.relative_path, asset.size_bytes),
+                (
+                    asset.sha256,
+                    manifest.dataset_id,
+                    asset.relative_path,
+                    asset.size_bytes,
+                ),
             )
 
     def register_selfplay_task(
@@ -316,9 +339,12 @@ class Catalog:
         return str(row["status"])
 
     def has_trajectory(self, game_id: str) -> bool:
-        return self.connection.execute(
-            "SELECT 1 FROM trajectories WHERE game_id=?", (game_id,)
-        ).fetchone() is not None
+        return (
+            self.connection.execute(
+                "SELECT 1 FROM trajectories WHERE game_id=?", (game_id,)
+            ).fetchone()
+            is not None
+        )
 
     def commit_trajectory_shard(
         self,
@@ -425,10 +451,14 @@ class Catalog:
         for event in events:
             if event.kind != "reject":
                 raise ValueError("only rejection events can be recorded here")
-            if event.asset_sha256 is None or self.connection.execute(
-                "SELECT 1 FROM assets WHERE asset_sha256=?",
-                (event.asset_sha256,),
-            ).fetchone() is None:
+            if (
+                event.asset_sha256 is None
+                or self.connection.execute(
+                    "SELECT 1 FROM assets WHERE asset_sha256=?",
+                    (event.asset_sha256,),
+                ).fetchone()
+                is None
+            ):
                 raise ValueError("rejection asset is not registered")
             self.connection.execute(
                 """
@@ -493,15 +523,21 @@ class Catalog:
                 SELECT game_id,content_sha256
                 FROM trajectories WHERE deleted=0
                   AND (? IS NULL OR asset_sha256 IN (
-                    SELECT asset_sha256 FROM assets WHERE source_kind=?
-                      AND (? IS NULL OR task_id=?)
+                    SELECT a.asset_sha256
+                    FROM assets a
+                    LEFT JOIN selfplay_tasks st ON st.task_id=a.task_id
+                    WHERE a.source_kind=?
+                      AND (? IS NULL OR a.task_id=?)
+                      AND (? != 'selfplay' OR st.status='sealed')
                   ))
                 ORDER BY game_id
                 """,
-                (source_kind, source_kind, task_id, task_id),
+                (source_kind, source_kind, task_id, task_id, source_kind),
             ):
                 game_id = row["game_id"]
-                split_digest = hashlib.sha256(f"{seed}:{game_id}".encode("ascii")).digest()
+                split_digest = hashlib.sha256(
+                    f"{seed}:{game_id}".encode("ascii")
+                ).digest()
                 validation = int.from_bytes(split_digest[:8], "big") < threshold
                 if (split == "validation") != validation:
                     continue
@@ -616,11 +652,87 @@ class Catalog:
             """,
             (snapshot_id,),
         ).fetchall()
-        if not rows and self.connection.execute(
-            "SELECT 1 FROM snapshots WHERE snapshot_id=?", (snapshot_id,)
-        ).fetchone() is None:
+        if (
+            not rows
+            and self.connection.execute(
+                "SELECT 1 FROM snapshots WHERE snapshot_id=?", (snapshot_id,)
+            ).fetchone()
+            is None
+        ):
             raise KeyError(f"unknown snapshot {snapshot_id}")
         return tuple(TrajectoryLocator(**dict(row)) for row in rows)
+
+    def selfplay_statistics(self) -> SelfPlayStatistics:
+        """Return task counts and trainable data from sealed self-play tasks."""
+
+        task_counts = {
+            row["status"]: int(row["count"])
+            for row in self.connection.execute(
+                "SELECT status,COUNT(*) AS count FROM selfplay_tasks GROUP BY status"
+            )
+        }
+        trajectory = self.connection.execute(
+            """
+            SELECT COUNT(*) AS games,
+                   COALESCE(SUM(t.trainable_positions), 0) AS positions
+            FROM trajectories t
+            JOIN assets a ON a.asset_sha256=t.asset_sha256
+            JOIN selfplay_tasks st ON st.task_id=a.task_id
+            WHERE t.deleted=0 AND a.source_kind='selfplay' AND st.status='sealed'
+            """
+        ).fetchone()
+        return SelfPlayStatistics(
+            sealed_tasks=task_counts.get("sealed", 0),
+            collecting_tasks=task_counts.get("collecting", 0),
+            failed_tasks=task_counts.get("failed", 0),
+            games=int(trajectory["games"]),
+            positions=int(trajectory["positions"]),
+        )
+
+    def snapshot_statistics(self, snapshot_id: str) -> SnapshotStatistics:
+        row = self.connection.execute(
+            """
+            SELECT s.snapshot_id,s.source_kind,s.task_id,
+                   COUNT(st.game_id) AS games,
+                   COALESCE(SUM(t.trainable_positions), 0) AS positions
+            FROM snapshots s
+            LEFT JOIN snapshot_trajectories st ON st.snapshot_id=s.snapshot_id
+            LEFT JOIN trajectories t ON t.game_id=st.game_id
+            WHERE s.snapshot_id=?
+            GROUP BY s.snapshot_id,s.source_kind,s.task_id
+            """,
+            (snapshot_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown snapshot {snapshot_id}")
+        return SnapshotStatistics(
+            snapshot_id=row["snapshot_id"],
+            source_kind=row["source_kind"],
+            task_id=row["task_id"],
+            games=int(row["games"]),
+            positions=int(row["positions"]),
+        )
+
+    def selfplay_outside_snapshot(self, snapshot_id: str | None) -> tuple[int, int]:
+        """Count sealed self-play games not represented by ``snapshot_id``."""
+
+        if snapshot_id is not None:
+            self.snapshot_statistics(snapshot_id)
+        row = self.connection.execute(
+            """
+            SELECT COUNT(*) AS games,
+                   COALESCE(SUM(t.trainable_positions), 0) AS positions
+            FROM trajectories t
+            JOIN assets a ON a.asset_sha256=t.asset_sha256
+            JOIN selfplay_tasks task ON task.task_id=a.task_id
+            LEFT JOIN snapshot_trajectories st
+              ON st.game_id=t.game_id AND st.snapshot_id=?
+            WHERE t.deleted=0 AND a.source_kind='selfplay'
+              AND task.status='sealed' AND st.game_id IS NULL
+            """,
+            (snapshot_id,),
+        ).fetchone()
+        return int(row["games"]), int(row["positions"])
 
     def annotation_locator(
         self,
@@ -636,7 +748,9 @@ class Catalog:
             else ""
         )
         snapshot_filter = "AND sa.snapshot_id=?" if snapshot_id is not None else ""
-        visibility_filter = "" if snapshot_id is not None else "AND a.deleted=0 AND s.deleted=0"
+        visibility_filter = (
+            "" if snapshot_id is not None else "AND a.deleted=0 AND s.deleted=0"
+        )
         parameters: tuple[object, ...] = (game_id, ply, teacher_fingerprint)
         if snapshot_id is not None:
             parameters += (snapshot_id,)

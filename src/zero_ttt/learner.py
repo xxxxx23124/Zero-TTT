@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 import uuid
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
@@ -15,6 +15,7 @@ from zero_ttt.config import ExperimentConfig
 from zero_ttt.data.contracts import BatchSource, TrainBatch
 from zero_ttt.model import BasePolicyValueModel, PolicyValueTransformer
 from zero_ttt.training.checkpoint import CheckpointManager, checkpoint_metadata
+from zero_ttt.training.contracts import CheckpointSummary, LearnerDataIdentity
 from zero_ttt.training.ema import update_slow_weights
 from zero_ttt.training.gradients import (
     NonFiniteGradientError,
@@ -22,14 +23,6 @@ from zero_ttt.training.gradients import (
     parameters_are_finite,
 )
 from zero_ttt.training.losses import TrainingTargets, compute_losses
-
-
-@dataclass(frozen=True, slots=True)
-class LearnerDataIdentity:
-    snapshot_id: str
-    sampling_config_sha256: str
-    mixture_manifest_sha256: str = ""
-    component_snapshot_ids: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -305,16 +298,22 @@ class Learner:
     def publication_due(self) -> bool:
         return self.state.samples_seen >= self.state.next_publish_sample
 
-    def checkpoint_payload(self, rng: np.random.Generator | None = None) -> dict[str, Any]:
+    def checkpoint_payload(
+        self, rng: np.random.Generator | None = None
+    ) -> dict[str, Any]:
         return {
             **checkpoint_metadata(self.config.canonical_json(), self.config.sha256),
             "learner_state": asdict(self.state),
-            "data_identity": None if self.data_identity is None else asdict(self.data_identity),
+            "data_identity": None
+            if self.data_identity is None
+            else asdict(self.data_identity),
             "fast_state": self.fast.state_dict(),
             "slow_state": self.slow.state_dict(),
             "optimizer_state": self.optimizer.state_dict(),
             "torch_rng_state": torch.get_rng_state(),
-            "cuda_rng_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            "cuda_rng_state": torch.cuda.get_rng_state_all()
+            if torch.cuda.is_available()
+            else None,
             "numpy_rng_state": None if rng is None else rng.bit_generator.state,
         }
 
@@ -344,30 +343,32 @@ class Learner:
     def publish_if_due(self):
         return self.publish() if self.publication_due else None
 
-    def restore(self, path, rng: np.random.Generator | None = None) -> None:
+    def _restore_payload(
+        self,
+        path,
+        rng: np.random.Generator | None,
+        *,
+        allow_data_transition: bool,
+    ) -> LearnerDataIdentity | None:
         payload = self.checkpoints.load(path, map_location="cpu")
         if (
             payload.get("config_sha256") != self.config.sha256
             or payload.get("config_json") != self.config.canonical_json()
         ):
             raise ValueError("checkpoint configuration does not match this run")
-        if "data_identity" not in payload:
-            raise ValueError("checkpoint data identity is incomplete")
-        stored_identity = payload["data_identity"]
-        if stored_identity is not None:
-            stored_identity = dict(stored_identity)
-            expected_fields = {field.name for field in fields(LearnerDataIdentity)}
-            if set(stored_identity) != expected_fields:
-                raise ValueError("checkpoint data identity is incomplete")
-        expected_identity = None if self.data_identity is None else asdict(self.data_identity)
-        if stored_identity != expected_identity:
-            raise ValueError("checkpoint data snapshot or sampling configuration does not match")
-        if "learner_state" not in payload:
-            raise ValueError("checkpoint learner state is incomplete")
-        state = dict(payload["learner_state"])
-        expected_state_fields = {field.name for field in fields(LearnerState)}
-        if set(state) != expected_state_fields:
-            raise ValueError("checkpoint learner state is incomplete")
+        summary = CheckpointSummary.from_payload(payload)
+        stored_identity = summary.data_identity
+        expected_identity = self.data_identity
+        if not allow_data_transition and stored_identity != expected_identity:
+            raise ValueError(
+                "checkpoint data snapshot or sampling configuration does not match"
+            )
+        if allow_data_transition:
+            if stored_identity is None or expected_identity is None:
+                raise ValueError("data transition requires old and new data identities")
+            if stored_identity == expected_identity:
+                raise ValueError("data transition requires a different data identity")
+        state = summary.learner_state
         self.fast.load_state_dict(payload["fast_state"])
         self.slow.load_state_dict(payload["slow_state"])
         self.optimizer.load_state_dict(payload["optimizer_state"])
@@ -377,3 +378,25 @@ class Learner:
             torch.cuda.set_rng_state_all(payload["cuda_rng_state"])
         if rng is not None and payload["numpy_rng_state"] is not None:
             rng.bit_generator.state = payload["numpy_rng_state"]
+        return stored_identity
+
+    def restore(self, path, rng: np.random.Generator | None = None) -> None:
+        self._restore_payload(path, rng, allow_data_transition=False)
+
+    def restore_for_data_transition(
+        self,
+        path,
+        rng: np.random.Generator | None = None,
+    ) -> LearnerDataIdentity:
+        """Restore all training state while explicitly adopting a new data identity.
+
+        The learner must be constructed with the destination ``data_identity``. This
+        deliberately keeps normal ``restore`` strict while allowing an orchestrator
+        to roll an immutable training snapshot without resetting optimizer, EMA, RNG,
+        or sample-based schedules.
+        """
+
+        previous = self._restore_payload(path, rng, allow_data_transition=True)
+        if previous is None:
+            raise ValueError("data transition checkpoint has no previous data identity")
+        return previous

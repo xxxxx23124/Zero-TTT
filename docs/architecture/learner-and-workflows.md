@@ -1,6 +1,6 @@
 # Learner 与流程边界
 
-状态：Learner、离线数据与手动分阶段的 OpenSpiel 自博弈闭环已实现；教师队列、自动循环和课程调度仍未实现。
+状态：Learner、离线数据、OpenSpiel 自博弈闭环和交互式控制台已实现；教师队列、无人值守自动循环和课程调度仍未实现。
 
 ## 组件职责
 
@@ -48,3 +48,9 @@ microbatch 16 跑到峰值 `14.246 GiB reserved`；生产配置把梯度累积�
 协调器只传 publication 路径/版本、分片 manifest 和阶段结果。整盘 publication 在采集期间
 冻结；采集封存后才训练并发布下一版。多棋局并发、统一 GPU 推理聚批是扩大采集前的性能
 要求，但不会改变上述职责边界。
+
+Docker 控制台位于独立 `zero_ttt.console` 包中；底层模块不导入它。普通 checkpoint restore
+继续严格绑定数据身份，只有控制台显式滚动不可变 snapshot 时才调用保留完整训练状态的数据
+迁移入口。共享的训练产物契约负责 checkpoint/publication 身份解析；console artifact
+coordinator 负责幂等恢复与登记，training-data planner 负责 cold/mixture 数据计划。控制台的
+JSON 状态用于菜单与审计，checkpoint、catalog 和不可变产物仍是事实源。

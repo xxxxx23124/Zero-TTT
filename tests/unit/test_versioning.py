@@ -5,6 +5,8 @@ import pytest
 from zero_ttt.versioning import (
     ALL_SCHEMAS,
     CATALOG_SCHEMA,
+    CONSOLE_CONFIG_SCHEMA,
+    CONSOLE_STATE_SCHEMA,
     EXPERIMENT_CONFIG_SCHEMA,
     MODEL_ARTIFACT_SCHEMA,
     RECORD_SCHEMA,
@@ -26,8 +28,21 @@ def test_schema_registry_has_the_clean_break_versions() -> None:
         SOURCE_MANIFEST_SCHEMA,
         TRAINING_MIXTURE_SCHEMA,
         SELFPLAY_TASK_SCHEMA,
+        CONSOLE_CONFIG_SCHEMA,
+        CONSOLE_STATE_SCHEMA,
     )
-    assert [schema.current for schema in ALL_SCHEMAS] == [6, 6, 4, 4, 4, 2, 2, 2]
+    assert [schema.current for schema in ALL_SCHEMAS] == [
+        6,
+        6,
+        4,
+        4,
+        4,
+        2,
+        2,
+        2,
+        1,
+        1,
+    ]
     assert len({schema.name for schema in ALL_SCHEMAS}) == len(ALL_SCHEMAS)
 
 

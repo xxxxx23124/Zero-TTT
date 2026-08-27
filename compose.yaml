@@ -24,6 +24,21 @@ services:
       PYTHONPATH: /workspace/src
     command: ["/bin/bash"]
 
+  training-console:
+    extends:
+      service: dev
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+      - zero-ttt-data-work:/datasets/work
+      - huggingface-cache:/cache/huggingface
+      - pip-cache:/cache/pip
+      - torch-cache:/cache/torch
+      - torch-extensions-cache:/cache/torch_extensions
+      - uv-cache:/cache/uv
+    command: ["zero-ttt", "console"]
+
   katago-version:
     profiles: ["katago"]
     build:
@@ -89,3 +104,4 @@ volumes:
   torch-cache:
   torch-extensions-cache:
   uv-cache:
+  zero-ttt-data-work:

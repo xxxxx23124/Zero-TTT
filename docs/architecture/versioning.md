@@ -13,6 +13,8 @@
 | 来源 manifest | v2 | 从原始资产重新生成 |
 | 训练 mixture manifest | v2 | 从当前 snapshot 重新创建 |
 | 自博弈 task manifest | v2 | 重新采集任务 |
+| 训练控制台配置 | v1 | 从当前模板重填 `configs/console.toml` |
+| 训练控制台状态 | v1 | 核对 run 产物后仅重建控制台状态 |
 
 写入方必须从具名 `SchemaSpec.current` 取得版本，读取方必须调用同一 spec 的严格校验。
 任一格式发生破坏性变化时只提升该格式，旧版和未知未来版得到同一种明确的重建错误。

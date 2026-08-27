@@ -1,6 +1,6 @@
 """Versioned training-data contracts, storage, and batch sources."""
 
-from zero_ttt.data.catalog import Catalog
+from zero_ttt.data.catalog import Catalog, SelfPlayStatistics, SnapshotStatistics
 from zero_ttt.data.catalog_source import CatalogBatchSource
 from zero_ttt.data.contracts import BatchSource, TrainBatch
 from zero_ttt.data.manifest import ManifestAsset, SourceManifest
@@ -23,6 +23,8 @@ __all__ = [
     "MixtureBatchSource",
     "MixtureComponent",
     "ShardStore",
+    "SelfPlayStatistics",
+    "SnapshotStatistics",
     "SourceManifest",
     "SyntheticBatchSource",
     "TrainBatch",

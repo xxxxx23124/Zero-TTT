@@ -1,7 +1,7 @@
 # 统一训练生命周期
 
-状态：冻结 publication、自博弈封存、snapshot mixture 和 Learner 消费的手动分阶段闭环已实现；
-自动长期协调器尚未实现。网络 raw policy 不是自身的改进标签。
+状态：冻结 publication、自博弈封存、snapshot mixture、Learner 消费和 Docker 交互式状态机已实现；
+无人值守自动长期循环尚未实现。网络 raw policy 不是自身的改进标签。
 
 ## 阶段
 
@@ -15,6 +15,9 @@
    标签来源，但旧数据可受控 rehearsal。
 5. **长期留档：** 保存分级 publication、固定评测与关键数据，用于回归、人机对战和未来
    快权重对照。
+
+自博弈 task 只有在全部请求棋局完成并进入 `sealed` 后才对训练 snapshot 可见；失败或仍在采集
+的 task 可以保留用于恢复和审计，但不会贡献 mixture 的 games/positions。
 
 ## 初始采样配方
 
@@ -49,4 +52,5 @@
 Human-SL 阶段只表示课程身份，不等同精确人类段位。
 
 序列存储见[数据契约](../architecture/trajectory-storage.md)，搜索边界见
-[OpenSpiel MCTS](../integrations/mcts-compatibility.md)。
+[OpenSpiel MCTS](../integrations/mcts-compatibility.md)，人工分阶段运行见
+[Docker 训练控制台](../operations/training-console.md)。
