@@ -6,17 +6,18 @@ Zero-TTT 负责学生模型、训练基础设施、准确棋规、数据资产�
 提供通用 Python PUCT/MCTS 控制流；本地 `GameState` 仍是规则真源。未修改的 KataGo 只作为
 Human-SL/强搜索教师和独立 GTP 引擎。
 
-```text
-历史棋谱 ───────────────┐
-OpenSpiel MCTS 自博弈 ──┼─→ immutable trajectory shards ─┐
-                        │          SQLite index/control ──┼─→ BatchSource → Learner
-KataGo 教师 ─→ annotation shards ─────────────────────────┘          │
-                                                                     ↓
-                                                        EMA publication
-                                                               │
-                                                  PositionEvaluator
-                                                               │
-                                                OpenSpiel Evaluator/MCTS
+```mermaid
+flowchart LR
+    historical["历史棋谱"] --> trajectories["immutable trajectory shards"]
+    selfplay["OpenSpiel MCTS 自博弈"] --> trajectories
+    teacher["KataGo 教师"] --> annotations["annotation shards"]
+    trajectories --> batch_source["BatchSource"]
+    sqlite["SQLite index/control"] --> batch_source
+    annotations --> batch_source
+    batch_source --> learner["Learner"]
+    learner --> publication["EMA publication"]
+    publication --> position_evaluator["PositionEvaluator"]
+    position_evaluator --> openspiel["OpenSpiel Evaluator/MCTS"]
 ```
 
 ## 当前已实现

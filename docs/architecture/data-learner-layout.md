@@ -77,12 +77,17 @@ EMA 与 checkpoint。Learner
 
 ## 依赖方向与首版范围
 
-```text
-source files + manifest
-          ↓
-Importer → records → shard store + catalog → BatchSource → TrainBatch → Learner
-                         ↑                     ↓                         ↓
-                       SQLite          replay + validation       publication
+```mermaid
+flowchart LR
+    source["source files + manifest"] --> importer["Importer"]
+    importer --> records["records"]
+    records --> storage["shard store + catalog"]
+    sqlite["SQLite"] --> storage
+    storage --> batch_source["BatchSource"]
+    batch_source --> train_batch["TrainBatch"]
+    batch_source --> replay_validation["replay + validation"]
+    train_batch --> learner["Learner"]
+    learner --> publication["publication"]
 ```
 
 - `game` 可被 replay 和 validation 使用；`model` 只被 Learner 与 inference 使用。
