@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from typing import Iterable
 
 import torch
 
@@ -19,6 +21,18 @@ class NonFiniteGradientError(FloatingPointError):
 class GradientNorms:
     base: float
     hypernet: float | None
+
+
+def parameters_are_finite(parameters: Iterable[torch.Tensor]) -> bool:
+    """Check parameters without allocating full-size boolean temporaries."""
+
+    infinity_norms = [
+        torch.linalg.vector_norm(parameter.detach(), ord=math.inf)
+        for parameter in parameters
+    ]
+    if not infinity_norms:
+        return True
+    return bool(torch.isfinite(torch.stack(infinity_norms)).all())
 
 
 def _clip_group(group: ModelParameterGroup, max_norm: float) -> float:

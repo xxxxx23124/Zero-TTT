@@ -18,6 +18,7 @@ from zero_ttt.data.pipeline import import_manifest
 from zero_ttt.data.shards import ShardStore
 from zero_ttt.learner import Learner, LearnerDataIdentity
 from zero_ttt.training.checkpoint import CheckpointManager
+from zero_ttt.versioning import SOURCE_MANIFEST_SCHEMA
 
 
 def main() -> int:
@@ -36,7 +37,7 @@ def main() -> int:
         size_bytes=archive.stat().st_size,
     )
     manifest = SourceManifest(
-        schema_version=1,
+        schema_version=SOURCE_MANIFEST_SCHEMA.current,
         dataset_id="katago-g170-smoke",
         source_type="katago-g170-sgfs-zip",
         license_id="CC0-1.0",

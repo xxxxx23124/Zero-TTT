@@ -16,7 +16,7 @@ import numpy as np
 
 from zero_ttt.config import ExperimentConfig
 from zero_ttt.data.catalog import Catalog
-from zero_ttt.data.records import RECORD_SCHEMA_VERSION, TrajectoryRecord
+from zero_ttt.data.records import TrajectoryRecord
 from zero_ttt.data.shards import ShardStore
 from zero_ttt.game.features import FEATURE_SCHEMA_ID
 from zero_ttt.game.rules import RULES_ID, Color
@@ -26,6 +26,7 @@ from zero_ttt.search.open_spiel import (
     OpenSpielGoGame,
     search_position,
 )
+from zero_ttt.versioning import RECORD_SCHEMA, SELFPLAY_TASK_SCHEMA
 
 
 def _canonical_json(payload: object) -> bytes:
@@ -119,7 +120,7 @@ class SelfPlayCollector:
 
         self.search_config_sha256 = search_config_sha256(config)
         identity_payload = {
-            "schema_version": 1,
+            "schema_version": SELFPLAY_TASK_SCHEMA.current,
             "publication_sha256": publication_sha256,
             "evaluator_id": evaluator_id,
             "search_config_sha256": self.search_config_sha256,
@@ -204,7 +205,7 @@ class SelfPlayCollector:
         )
         length = len(moves)
         record = TrajectoryRecord(
-            schema_version=RECORD_SCHEMA_VERSION,
+            schema_version=RECORD_SCHEMA.current,
             game_id=_game_id(self.task_id, ordinal),
             content_sha256="",
             dataset_id=f"selfplay/{self.task_id}",

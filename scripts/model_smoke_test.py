@@ -16,9 +16,8 @@ from zero_ttt.config import ExperimentConfig, load_config
 from zero_ttt.game.rules import ACTION_SIZE, BOARD_AREA, BOARD_SIZE
 from zero_ttt.model import ModelOutput, PolicyValueTransformer
 from zero_ttt.training.ema import update_slow_weights
-from zero_ttt.training.gradients import clip_model_gradients
+from zero_ttt.training.gradients import clip_model_gradients, parameters_are_finite
 from zero_ttt.training.losses import TrainingTargets, compute_losses
-from zero_ttt.training.trainer import parameters_are_finite
 
 
 MEMORY_LIMIT_BYTES = int(14.5 * 1024**3)
@@ -60,13 +59,13 @@ def _build_optimizer(
 def _set_learning_rate(
     optimizer: torch.optim.Optimizer,
     config: ExperimentConfig,
-    step: int,
+    samples_seen: int,
 ) -> float:
-    warmup = config.training.warmup_steps
-    if step <= warmup:
-        learning_rate = config.training.learning_rate * step / warmup
+    warmup = config.training.warmup_samples
+    if samples_seen <= warmup:
+        learning_rate = config.training.learning_rate * samples_seen / warmup
     else:
-        learning_rate = config.training.learning_rate * math.sqrt(warmup / step)
+        learning_rate = config.training.learning_rate * math.sqrt(warmup / samples_seen)
     for group in optimizer.param_groups:
         multiplier = (
             config.training.hypernet.learning_rate_multiplier
@@ -186,7 +185,8 @@ def run_case(
         )
     ):
         raise FloatingPointError("production publication output is non-finite")
-    _set_learning_rate(optimizer, config, step=1)
+    effective_batch = batch * accumulation
+    _set_learning_rate(optimizer, config, samples_seen=effective_batch)
     optimizer.zero_grad(set_to_none=False)
     _, compile_loss = _loss(fast, board, global_features, legal, targets, config)
     (compile_loss / accumulation).backward()
@@ -199,8 +199,8 @@ def run_case(
     compile_peak_reserved_gib = torch.cuda.max_memory_reserved() / 1024**3
     post_compile_reserved_gib = torch.cuda.memory_reserved() / 1024**3
 
-    effective_batch = batch * accumulation
     ema_pending_samples = effective_batch
+    next_ema_sample = config.training.ema_update_interval_samples
     microbatch_seconds: list[float] = []
     optimizer_step_seconds: list[float] = []
     gradient_norms: list[float] = []
@@ -213,7 +213,8 @@ def run_case(
     torch.cuda.reset_peak_memory_stats()
 
     for optimizer_step in range(2, measured_optimizer_steps + 2):
-        _set_learning_rate(optimizer, config, optimizer_step)
+        samples_seen = optimizer_step * effective_batch
+        _set_learning_rate(optimizer, config, samples_seen)
         optimizer.zero_grad(set_to_none=False)
         step_started = time.perf_counter()
         for _ in range(accumulation):
@@ -239,7 +240,7 @@ def run_case(
         memory_peaks["optimizer_step"] = torch.cuda.max_memory_reserved() / 1024**3
         optimizer_step_seconds.append(time.perf_counter() - step_started)
         ema_pending_samples += effective_batch
-        if optimizer_step % config.training.ema_update_interval == 0:
+        if samples_seen >= next_ema_sample:
             ema_started = time.perf_counter()
             update_slow_weights(
                 slow,
@@ -250,6 +251,8 @@ def run_case(
             ema_update_seconds = time.perf_counter() - ema_started
             ema_pending_samples = 0
             ema_natural = True
+            interval = config.training.ema_update_interval_samples
+            next_ema_sample = (samples_seen // interval + 1) * interval
 
     if ema_update_seconds is None:
         ema_started = time.perf_counter()

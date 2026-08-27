@@ -11,14 +11,9 @@ from typing import Literal
 
 import numpy as np
 
-from zero_ttt.data.records import (
-    AnnotationRecord,
-    RECORD_SCHEMA_VERSION,
-    SUPPORTED_RECORD_SCHEMA_VERSIONS,
-    TrajectoryRecord,
-)
-SHARD_SCHEMA_VERSION = 3
-SUPPORTED_SHARD_SCHEMA_VERSIONS = frozenset({2, 3})
+from zero_ttt.data.records import AnnotationRecord, TrajectoryRecord
+from zero_ttt.versioning import RECORD_SCHEMA, SHARD_SCHEMA
+
 ShardKind = Literal["trajectory", "annotation"]
 
 
@@ -54,6 +49,13 @@ def _unpack_text(archive: np.lib.npyio.NpzFile, prefix: str) -> list[str]:
         bytes(data[offsets[index] : offsets[index + 1]]).decode("utf-8")
         for index in range(len(offsets) - 1)
     ]
+
+
+def _schema_value(archive: np.lib.npyio.NpzFile, name: str) -> object:
+    value = archive[name]
+    if value.shape != ():
+        return value
+    return value.item()
 
 
 def _concatenate_int(rows: list[tuple[int, ...]], dtype: np.dtype) -> tuple[np.ndarray, np.ndarray]:
@@ -104,7 +106,7 @@ class ShardStore:
     def write_trajectories(self, records: list[TrajectoryRecord]) -> ShardInfo:
         if not records:
             raise ValueError("cannot write an empty trajectory shard")
-        if any(record.schema_version != RECORD_SCHEMA_VERSION for record in records):
+        if any(record.schema_version != RECORD_SCHEMA.current for record in records):
             raise ValueError("new trajectory shards must use the current record schema")
         move_offsets, moves = _concatenate_int([record.moves for record in records], np.int16)
         policy_game_offsets = np.zeros(len(records) + 1, dtype=np.int64)
@@ -120,8 +122,8 @@ class ShardStore:
             policy_actions.extend(record.policy_actions)
             policy_values.extend(record.policy_values)
         arrays: dict[str, np.ndarray] = {
-            "schema_version": np.asarray(SHARD_SCHEMA_VERSION, dtype=np.int32),
-            "record_schema_version": np.asarray(RECORD_SCHEMA_VERSION, dtype=np.int32),
+            "schema_version": np.asarray(SHARD_SCHEMA.current, dtype=np.int32),
+            "record_schema_version": np.asarray(RECORD_SCHEMA.current, dtype=np.int32),
             "kind": np.asarray(1, dtype=np.uint8),
             "game_ids": _hex_matrix([record.game_id for record in records]),
             "content_hashes": _hex_matrix([record.content_sha256 for record in records]),
@@ -228,15 +230,14 @@ class ShardStore:
             dataset_ids = _unpack_text(archive, "dataset_ids")
             member_paths = _unpack_text(archive, "member_paths")
             rules = _unpack_text(archive, "rules")
-            if record_schema >= 3:
-                source_kinds = _unpack_text(archive, "source_kinds")
-                task_ids = _unpack_text(archive, "task_ids")
-                terminations = _unpack_text(archive, "terminations")
-                black_agent_ids = _unpack_text(archive, "black_agent_ids")
-                white_agent_ids = _unpack_text(archive, "white_agent_ids")
-                publication_hashes = _unpack_text(archive, "publication_hashes")
-                feature_schema_ids = _unpack_text(archive, "feature_schema_ids")
-                search_config_hashes = _unpack_text(archive, "search_config_hashes")
+            source_kinds = _unpack_text(archive, "source_kinds")
+            task_ids = _unpack_text(archive, "task_ids")
+            terminations = _unpack_text(archive, "terminations")
+            black_agent_ids = _unpack_text(archive, "black_agent_ids")
+            white_agent_ids = _unpack_text(archive, "white_agent_ids")
+            publication_hashes = _unpack_text(archive, "publication_hashes")
+            feature_schema_ids = _unpack_text(archive, "feature_schema_ids")
+            search_config_hashes = _unpack_text(archive, "search_config_hashes")
             records = []
             count = len(archive["game_ids"])
             for index in range(count):
@@ -275,94 +276,46 @@ class ShardStore:
                             float(value) for value in archive["ownership_black"][index]
                         ),
                         ownership_available=bool(archive["ownership_mask"][index]),
-                        source_kind=(
-                            source_kinds[index]
-                            if record_schema >= 3
-                            else "external/played_move"
+                        source_kind=source_kinds[index],
+                        task_id=task_ids[index],
+                        termination=terminations[index],
+                        game_seed=int(archive["game_seeds"][index]),
+                        black_agent_id=black_agent_ids[index],
+                        white_agent_id=white_agent_ids[index],
+                        publication_sha256=publication_hashes[index],
+                        feature_schema_id=feature_schema_ids[index],
+                        search_config_sha256=search_config_hashes[index],
+                        search_budgets=tuple(
+                            int(value)
+                            for value in archive["search_budgets"][position_start:position_end]
                         ),
-                        task_id=task_ids[index] if record_schema >= 3 else "",
-                        termination=terminations[index] if record_schema >= 3 else "external",
-                        game_seed=(
-                            int(archive["game_seeds"][index]) if record_schema >= 3 else 0
+                        root_values=tuple(
+                            float(value)
+                            for value in archive["root_values"][position_start:position_end]
                         ),
-                        black_agent_id=(
-                            black_agent_ids[index] if record_schema >= 3 else ""
+                        root_score_margins=tuple(
+                            float(value)
+                            for value in archive["root_score_margins"][position_start:position_end]
                         ),
-                        white_agent_id=(
-                            white_agent_ids[index] if record_schema >= 3 else ""
+                        temperatures=tuple(
+                            float(value)
+                            for value in archive["temperatures"][position_start:position_end]
                         ),
-                        publication_sha256=(
-                            publication_hashes[index] if record_schema >= 3 else ""
+                        search_seeds=tuple(
+                            int(value)
+                            for value in archive["search_seeds"][position_start:position_end]
                         ),
-                        feature_schema_id=(
-                            feature_schema_ids[index] if record_schema >= 3 else ""
+                        root_noise_mask=tuple(
+                            bool(value)
+                            for value in archive["root_noise_mask"][position_start:position_end]
                         ),
-                        search_config_sha256=(
-                            search_config_hashes[index] if record_schema >= 3 else ""
+                        search_metadata_mask=tuple(
+                            bool(value)
+                            for value in archive["search_metadata_mask"][position_start:position_end]
                         ),
-                        search_budgets=(
-                            tuple(
-                                int(value)
-                                for value in archive["search_budgets"][position_start:position_end]
-                            )
-                            if record_schema >= 3
-                            else ()
-                        ),
-                        root_values=(
-                            tuple(
-                                float(value)
-                                for value in archive["root_values"][position_start:position_end]
-                            )
-                            if record_schema >= 3
-                            else ()
-                        ),
-                        root_score_margins=(
-                            tuple(
-                                float(value)
-                                for value in archive["root_score_margins"][position_start:position_end]
-                            )
-                            if record_schema >= 3
-                            else ()
-                        ),
-                        temperatures=(
-                            tuple(
-                                float(value)
-                                for value in archive["temperatures"][position_start:position_end]
-                            )
-                            if record_schema >= 3
-                            else ()
-                        ),
-                        search_seeds=(
-                            tuple(
-                                int(value)
-                                for value in archive["search_seeds"][position_start:position_end]
-                            )
-                            if record_schema >= 3
-                            else ()
-                        ),
-                        root_noise_mask=(
-                            tuple(
-                                bool(value)
-                                for value in archive["root_noise_mask"][position_start:position_end]
-                            )
-                            if record_schema >= 3
-                            else ()
-                        ),
-                        search_metadata_mask=(
-                            tuple(
-                                bool(value)
-                                for value in archive["search_metadata_mask"][position_start:position_end]
-                            )
-                            if record_schema >= 3
-                            else ()
-                        ),
-                        root_score_mask=(
-                            tuple(
-                                bool(value)
-                                for value in archive["root_score_mask"][position_start:position_end]
-                            )
-                            if record_schema >= 3
-                            else ()
+                        root_score_mask=tuple(
+                            bool(value)
+                            for value in archive["root_score_mask"][position_start:position_end]
                         ),
                     )
                 )
@@ -371,7 +324,7 @@ class ShardStore:
     def write_annotations(self, records: list[AnnotationRecord]) -> ShardInfo:
         if not records:
             raise ValueError("cannot write an empty annotation shard")
-        if any(record.schema_version != RECORD_SCHEMA_VERSION for record in records):
+        if any(record.schema_version != RECORD_SCHEMA.current for record in records):
             raise ValueError("new annotation shards must use the current record schema")
         policy_offsets, policy_actions = _concatenate_int(
             [record.policy_actions for record in records], np.int16
@@ -380,8 +333,8 @@ class ShardStore:
             [value for record in records for value in record.policy_values], dtype=np.float32
         )
         arrays: dict[str, np.ndarray] = {
-            "schema_version": np.asarray(SHARD_SCHEMA_VERSION, dtype=np.int32),
-            "record_schema_version": np.asarray(RECORD_SCHEMA_VERSION, dtype=np.int32),
+            "schema_version": np.asarray(SHARD_SCHEMA.current, dtype=np.int32),
+            "record_schema_version": np.asarray(RECORD_SCHEMA.current, dtype=np.int32),
             "kind": np.asarray(2, dtype=np.uint8),
             "game_ids": _hex_matrix([record.game_id for record in records]),
             "content_hashes": _hex_matrix([record.content_sha256 for record in records]),
@@ -527,16 +480,8 @@ class ShardStore:
     def _open_validated(path: Path, expected_kind: int | None = None):
         archive = np.load(path, allow_pickle=False)
         try:
-            actual_schema = int(archive["schema_version"])
-            if actual_schema not in SUPPORTED_SHARD_SCHEMA_VERSIONS:
-                raise ValueError(
-                    f"unsupported shard schema v{actual_schema}; rebuild data shards for v2 or later"
-                )
-            record_schema = int(archive["record_schema_version"])
-            if record_schema not in SUPPORTED_RECORD_SCHEMA_VERSIONS:
-                raise ValueError(
-                    f"unsupported record schema v{record_schema}; rebuild data shards for v2 or later"
-                )
+            SHARD_SCHEMA.require(_schema_value(archive, "schema_version"))
+            RECORD_SCHEMA.require(_schema_value(archive, "record_schema_version"))
             if expected_kind is not None and int(archive["kind"]) != expected_kind:
                 raise ValueError("unexpected shard kind")
             for name in archive.files:

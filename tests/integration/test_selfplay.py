@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import numpy as np
 import pytest
@@ -26,6 +27,11 @@ from zero_ttt.learner import Learner, LearnerDataIdentity
 from zero_ttt.model import PolicyValueTransformer
 from zero_ttt.selfplay import SelfPlayCollector
 from zero_ttt.training.checkpoint import CheckpointManager, checkpoint_metadata
+from zero_ttt.versioning import (
+    SELFPLAY_TASK_SCHEMA,
+    SOURCE_MANIFEST_SCHEMA,
+    TRAINING_MIXTURE_SCHEMA,
+)
 
 
 class UniformEvaluator:
@@ -85,6 +91,12 @@ def test_selfplay_root_noise_mask_tracks_nonzero_epsilon(
         ).collect()
 
     store = ShardStore(store_root)
+    task_manifest = json.loads(
+        (store_root / "metadata" / "selfplay" / f"{summary.task_id}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert task_manifest["schema_version"] == SELFPLAY_TASK_SCHEMA.current
     with Catalog(catalog_path, store) as catalog:
         snapshot = catalog.create_snapshot(
             5,
@@ -250,7 +262,7 @@ def test_tiny_publication_selfplay_mixture_and_learner_step(
         )
         asset = ManifestAsset("cold-start.zip", cold_start.asset_sha256, 1)
         manifest = SourceManifest(
-            schema_version=1,
+            schema_version=SOURCE_MANIFEST_SCHEMA.current,
             dataset_id="cold-start",
             source_type="test-rehearsal",
             license_id="test-only",
@@ -267,7 +279,7 @@ def test_tiny_publication_selfplay_mixture_and_learner_step(
         )
 
     mixture = TrainingMixtureManifest(
-        1,
+        TRAINING_MIXTURE_SCHEMA.current,
         (
             MixtureComponent(selfplay_snapshot, 0.8),
             MixtureComponent(cold_snapshot, 0.2),

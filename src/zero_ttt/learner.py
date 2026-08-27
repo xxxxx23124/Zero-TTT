@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
-import json
 import math
 import time
 import uuid
-from dataclasses import asdict, dataclass
-from typing import Any, Iterable
+from dataclasses import asdict, dataclass, fields
+from typing import Any
 
 import numpy as np
 import torch
 
-from zero_ttt.config import ExperimentConfig, config_from_mapping
+from zero_ttt.config import ExperimentConfig
 from zero_ttt.data.contracts import BatchSource, TrainBatch
 from zero_ttt.model import BasePolicyValueModel, PolicyValueTransformer
 from zero_ttt.training.checkpoint import CheckpointManager, checkpoint_metadata
 from zero_ttt.training.ema import update_slow_weights
-from zero_ttt.training.gradients import NonFiniteGradientError, clip_model_gradients
+from zero_ttt.training.gradients import (
+    NonFiniteGradientError,
+    clip_model_gradients,
+    parameters_are_finite,
+)
 from zero_ttt.training.losses import TrainingTargets, compute_losses
 
 
@@ -57,18 +60,6 @@ class StepMetrics:
     hyper_dynamic_rms: float
     hyper_static_rms: float
     ema_update_seconds: float | None
-
-
-def parameters_are_finite(parameters: Iterable[torch.Tensor]) -> bool:
-    """Check parameters without allocating full-size boolean temporaries."""
-
-    infinity_norms = [
-        torch.linalg.vector_norm(parameter.detach(), ord=math.inf)
-        for parameter in parameters
-    ]
-    if not infinity_norms:
-        return True
-    return bool(torch.isfinite(torch.stack(infinity_norms)).all())
 
 
 def _next_boundary(samples_seen: int, interval: int) -> int:
@@ -317,7 +308,7 @@ class Learner:
     def checkpoint_payload(self, rng: np.random.Generator | None = None) -> dict[str, Any]:
         return {
             **checkpoint_metadata(self.config.canonical_json(), self.config.sha256),
-            "trainer_state": asdict(self.state),
+            "learner_state": asdict(self.state),
             "data_identity": None if self.data_identity is None else asdict(self.data_identity),
             "fast_state": self.fast.state_dict(),
             "slow_state": self.slow.state_dict(),
@@ -355,43 +346,34 @@ class Learner:
 
     def restore(self, path, rng: np.random.Generator | None = None) -> None:
         payload = self.checkpoints.load(path, map_location="cpu")
-        if payload["config_sha256"] != self.config.sha256:
-            try:
-                stored = config_from_mapping(json.loads(payload["config_json"]))
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-                raise ValueError("checkpoint configuration does not match this run") from error
-            if stored.sha256 != self.config.sha256:
-                raise ValueError("checkpoint configuration does not match this run")
-        stored_identity = payload.get("data_identity")
+        if (
+            payload.get("config_sha256") != self.config.sha256
+            or payload.get("config_json") != self.config.canonical_json()
+        ):
+            raise ValueError("checkpoint configuration does not match this run")
+        if "data_identity" not in payload:
+            raise ValueError("checkpoint data identity is incomplete")
+        stored_identity = payload["data_identity"]
         if stored_identity is not None:
             stored_identity = dict(stored_identity)
-            stored_identity.setdefault("mixture_manifest_sha256", "")
-            stored_identity.setdefault("component_snapshot_ids", ())
+            expected_fields = {field.name for field in fields(LearnerDataIdentity)}
+            if set(stored_identity) != expected_fields:
+                raise ValueError("checkpoint data identity is incomplete")
         expected_identity = None if self.data_identity is None else asdict(self.data_identity)
         if stored_identity != expected_identity:
             raise ValueError("checkpoint data snapshot or sampling configuration does not match")
+        if "learner_state" not in payload:
+            raise ValueError("checkpoint learner state is incomplete")
+        state = dict(payload["learner_state"])
+        expected_state_fields = {field.name for field in fields(LearnerState)}
+        if set(state) != expected_state_fields:
+            raise ValueError("checkpoint learner state is incomplete")
         self.fast.load_state_dict(payload["fast_state"])
         self.slow.load_state_dict(payload["slow_state"])
         self.optimizer.load_state_dict(payload["optimizer_state"])
-        state = dict(payload["trainer_state"])
-        samples_seen = int(state.get("samples_seen", 0))
-        state.setdefault(
-            "next_ema_sample",
-            _next_boundary(samples_seen, self.config.training.ema_update_interval_samples),
-        )
-        state.setdefault(
-            "next_publish_sample",
-            _next_boundary(samples_seen, self.config.training.publish_interval_samples),
-        )
-        state.setdefault("last_published_samples", 0)
-        state.setdefault("run_id", uuid.uuid4().hex)
         self.state = LearnerState(**state)
         torch.set_rng_state(payload["torch_rng_state"].cpu())
         if torch.cuda.is_available() and payload["cuda_rng_state"] is not None:
             torch.cuda.set_rng_state_all(payload["cuda_rng_state"])
         if rng is not None and payload["numpy_rng_state"] is not None:
             rng.bit_generator.state = payload["numpy_rng_state"]
-
-
-Trainer = Learner
-TrainerState = LearnerState

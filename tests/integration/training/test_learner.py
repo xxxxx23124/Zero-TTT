@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import hashlib
-import json
 from pathlib import Path
 
 import numpy as np
@@ -16,21 +14,13 @@ from zero_ttt.model import PolicyValueTransformer
 from zero_ttt.training.checkpoint import CheckpointManager
 
 
-def test_legacy_step_schedule_is_normalized_once(tmp_path: Path) -> None:
+def test_legacy_step_schedule_keys_are_rejected() -> None:
     import tomllib
 
     raw = tomllib.loads(Path("configs/test.toml").read_text(encoding="utf-8"))
     training = raw["training"]
     training["warmup_steps"] = training.pop("warmup_samples") // 4
-    training["ema_update_interval"] = training.pop("ema_update_interval_samples") // 4
-    training["publish_interval"] = training.pop("publish_interval_samples") // 4
-    config = config_from_mapping(raw)
-    assert config.training.warmup_samples == 8
-    assert config.training.ema_update_interval_samples == 4
-    assert config.training.publish_interval_samples == 8
-
-    raw["training"]["warmup_samples"] = 8
-    with pytest.raises(ValueError, match="cannot both"):
+    with pytest.raises(ValueError, match=r"unknown fields: warmup_steps"):
         config_from_mapping(raw)
 
 
@@ -98,33 +88,20 @@ def test_checkpoint_rejects_different_data_identity(tmp_path: Path) -> None:
         second.restore(path)
 
 
-def test_checkpoint_with_legacy_step_keys_restores(tmp_path: Path) -> None:
+@pytest.mark.parametrize("missing", ("data_identity", "learner_state", "state_field"))
+def test_checkpoint_requires_complete_current_state(tmp_path: Path, missing: str) -> None:
     config = load_config("configs/test.toml")
     manager = CheckpointManager(tmp_path, keep=2)
     learner = Learner(config, manager)
     payload = learner.checkpoint_payload(np.random.default_rng(2))
-    legacy = json.loads(config.canonical_json())
-    training = legacy["training"]
-    effective = config.training.effective_batch_size
-    training["warmup_steps"] = training.pop("warmup_samples") // effective
-    training["ema_update_interval"] = training.pop("ema_update_interval_samples") // effective
-    training["publish_interval"] = training.pop("publish_interval_samples") // effective
-    config_json = json.dumps(legacy, sort_keys=True, separators=(",", ":"))
-    payload["config_json"] = config_json
-    payload["config_sha256"] = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
-    for key in (
-        "next_ema_sample",
-        "next_publish_sample",
-        "last_published_samples",
-        "run_id",
-    ):
-        payload["trainer_state"].pop(key)
-    payload.pop("data_identity")
-    path = tmp_path / "legacy-step-keys.pt"
+    if missing == "state_field":
+        payload["learner_state"].pop("run_id")
+    else:
+        payload.pop(missing)
+    path = tmp_path / f"missing-{missing}.pt"
     torch.save(payload, path)
-    learner.restore(path, np.random.default_rng(2))
-    assert learner.state.next_ema_sample == config.training.ema_update_interval_samples
-    assert learner.state.next_publish_sample == config.training.publish_interval_samples
+    with pytest.raises(ValueError, match=r"checkpoint .* (identity|state) is incomplete"):
+        learner.restore(path, np.random.default_rng(2))
 
 
 def test_publication_failure_does_not_advance_state(tmp_path: Path, monkeypatch) -> None:

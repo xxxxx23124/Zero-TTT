@@ -6,6 +6,7 @@
 ## 当前架构
 
 - [系统边界](architecture/overview.md)
+- [内部格式版本](architecture/versioning.md)
 - [模型与训练](architecture/model-and-training.md)
 - [Learner 与流程边界](architecture/learner-and-workflows.md)
 - [公共契约](architecture/contracts.md)

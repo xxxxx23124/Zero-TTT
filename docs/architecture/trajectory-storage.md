@@ -1,6 +1,6 @@
 # 序列化训练数据
 
-状态：v3 trajectory/annotation、NPZ shard、SQLite catalog 和 snapshot 已实现，并兼容读取 v2。
+状态：v4 trajectory/annotation、NPZ shard、SQLite catalog 和 snapshot 已实现，只接受当前版本。
 [RLDS](https://github.com/google-research/rlds/blob/main/README.md) 的“episode 包含有序 steps”
 语义，但不引入 TensorFlow 或 TFDS。“一盘一个序列”是逻辑边界，不等于一盘一个文件。
 
@@ -15,10 +15,9 @@
 - publication、特征 schema、搜索配置、标签来源和教师指纹；
 - 来源许可、原文件哈希，或自博弈任务身份。
 
-v3 自博弈记录额外保存 publication/agent/搜索配置身份、整局与逐步种子、实际 simulation 数、
+当前自博弈记录保存 publication/agent/搜索配置身份、整局与逐步种子、实际 simulation 数、
 根 value/score、温度及噪声/可用 mask。`root_noise_mask` 只在对应搜索实际使用非零
-Dirichlet epsilon 时为真。新 shard 只写 v3；v2 内容哈希和旧 snapshot 身份按原算法读取，
-不重写旧文件。
+Dirichlet epsilon 时为真。新 shard 只写 v4；旧 record、shard、catalog 和 snapshot 必须重建。
 
 不把重复的 `25×19×19` float 特征当作权威数据。当前编码器从空棋盘、规则和 moves
 确定性重建全部局面；未来可增加可删除的派生特征缓存。
@@ -66,7 +65,7 @@ burn-in 只恢复当前模型快状态，不计算 loss；快状态本身不落�
 - 已覆盖 moves 重建、合法着、按 position 权重的 shard-local microbatch、D4、annotation 精确
   命中和逐标签 mask；每个 position 的边际抽样概率均匀。
 - 已覆盖 schema/checksum、原子 shard、半写临时文件恢复、snapshot 引用保护与 whole-shard GC。
-- v1 catalog/shard 不迁移；v2 catalog 原地做只增加表/列的 v3 迁移，v2 shard 保持只读兼容。
+- catalog 只创建或打开精确的当前 schema；旧 catalog/shard 不迁移，也不会被自动删除。
 - 连续子序列、burn-in、跨 shard compaction 和长期窗口监控仍是后续工作。
 
 提交 `e2b3017` 的整盘 `GameRecord`、棋步重放和缓存仅作行为参考；不恢复“每盘 NPZ BLOB

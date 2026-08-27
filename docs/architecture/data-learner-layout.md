@@ -13,15 +13,14 @@ src/zero_ttt/
 │   ├── manifest.py           # SourceManifest 与资源哈希
 │   ├── importers/katago_sgf.py
 │   ├── shards.py             # content-addressed NPZ
-│   ├── catalog.py            # SQLite migrations、snapshot 与 GC
+│   ├── catalog.py            # SQLite schema、snapshot 与 GC
 │   ├── catalog_source.py     # snapshot → TrainBatch
 │   └── pipeline.py           # importer 与持久层协调
 ├── learner.py                # 唯一 Learner 实现
-└── training/                 # loss、梯度、EMA、checkpoint 与兼容导出
+└── training/                 # loss、梯度、EMA 与 checkpoint
 ```
 
-目录表达职责所有权；旧 `zero_ttt.training.trainer.Trainer` 是 `Learner` 的兼容别名，不保留
-第二份训练实现。
+目录表达职责所有权；`zero_ttt.learner.Learner` 是唯一训练实现。
 
 ## `data` 的内部边界
 
@@ -51,7 +50,7 @@ OpenGo 首版不设专属模块；它们未来仍须实现同一协议。
 ## 分片、SQLite 与采样
 
 `shards.py` 负责版本化具名数组、不可变分片、原子封存和 SHA-256；`catalog.py` 只保存来源、
-shard、game、索引、校验与状态等控制信息，并负责 schema migration、半写恢复和孤立文件报告。
+shard、game、索引、校验与状态等控制信息，并负责当前 schema 初始化、半写恢复和孤立文件报告。
 
 SQLite 不保存大型训练 BLOB，也不为每个 position 建行。随机采样基于 shard/game 的 step
 范围和 offset，不使用 `ORDER BY RANDOM()`。教师任务、租约和评级表由未来 migration 增加，
@@ -70,7 +69,7 @@ annotation 模式与 D4；物理重分片不改变 snapshot 的逻辑内容身�
 ## Learner 与工作流
 
 `learner.py` 是训练若干 step、保存、恢复和发布的小型门面。`training` 包承接损失、梯度、
-EMA、checkpoint 与旧导入路径。Learner
+EMA 与 checkpoint。Learner
 独占训练模型和优化状态，但只消费 `BatchSource`，不知道 Importer、shard、SQLite 或 workflow。
 
 `data.pipeline` 与 CLI 负责组合 Importer、shard store、catalog、`BatchSource` 和 Learner，

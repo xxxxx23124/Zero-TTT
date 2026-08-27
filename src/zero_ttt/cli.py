@@ -258,6 +258,7 @@ def _offline_imitation(arguments: argparse.Namespace) -> None:
 
 def _mixture_create(arguments: argparse.Namespace) -> None:
     from zero_ttt.data.mixture import MixtureComponent, TrainingMixtureManifest
+    from zero_ttt.versioning import TRAINING_MIXTURE_SCHEMA
 
     components = []
     for value in arguments.component:
@@ -269,7 +270,10 @@ def _mixture_create(arguments: argparse.Namespace) -> None:
         except ValueError as error:
             raise ValueError("mixture component weight must be numeric") from error
         components.append(MixtureComponent(snapshot_id, weight))
-    manifest = TrainingMixtureManifest(1, tuple(components))
+    manifest = TrainingMixtureManifest(
+        TRAINING_MIXTURE_SCHEMA.current,
+        tuple(components),
+    )
     manifest.save(arguments.output)
     print(
         json.dumps(

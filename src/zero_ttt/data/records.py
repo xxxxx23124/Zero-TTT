@@ -11,10 +11,7 @@ from typing import Literal
 import numpy as np
 
 from zero_ttt.game.rules import ACTION_SIZE, BOARD_AREA
-
-
-RECORD_SCHEMA_VERSION = 3
-SUPPORTED_RECORD_SCHEMA_VERSIONS = frozenset({2, 3})
+from zero_ttt.versioning import RECORD_SCHEMA
 
 
 def stable_game_id(
@@ -83,8 +80,7 @@ class TrajectoryRecord:
     root_score_mask: tuple[bool, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.schema_version not in SUPPORTED_RECORD_SCHEMA_VERSIONS:
-            raise ValueError("unsupported trajectory record schema")
+        RECORD_SCHEMA.require(self.schema_version)
         try:
             bytes.fromhex(self.game_id)
             bytes.fromhex(self.asset_sha256)
@@ -170,36 +166,32 @@ class TrajectoryRecord:
             )
         ):
             raise ValueError("trajectory targets must be finite")
-        if self.schema_version == 2:
-            if self.source_kind != "external/played_move" or any(self.search_metadata_mask):
-                raise ValueError("v2 trajectories cannot contain v3 search metadata")
-        else:
-            if not self.source_kind or not self.termination:
-                raise ValueError("v3 trajectories require source and termination identities")
-            if not 0 <= self.game_seed < 1 << 64:
-                raise ValueError("game_seed must be an unsigned 64-bit integer")
-            if any(not 0 <= seed < 1 << 64 for seed in self.search_seeds):
-                raise ValueError("search seeds must be unsigned 64-bit integers")
-            if any(value < 0 for value in self.search_budgets):
-                raise ValueError("search budgets cannot be negative")
-            if any(value < 0 for value in normalized_temperatures):
-                raise ValueError("temperatures cannot be negative")
-            for index, available in enumerate(self.search_metadata_mask):
-                if available and self.search_budgets[index] <= 0:
-                    raise ValueError("available search metadata requires a positive budget")
-            if self.source_kind == "selfplay/mcts":
-                identities = (
-                    self.task_id,
-                    self.black_agent_id,
-                    self.white_agent_id,
-                    self.publication_sha256,
-                    self.feature_schema_id,
-                    self.search_config_sha256,
-                )
-                if any(not value for value in identities) or not all(
-                    self.search_metadata_mask
-                ):
-                    raise ValueError("MCTS self-play trajectories require complete identities")
+        if not self.source_kind or not self.termination:
+            raise ValueError("trajectories require source and termination identities")
+        if not 0 <= self.game_seed < 1 << 64:
+            raise ValueError("game_seed must be an unsigned 64-bit integer")
+        if any(not 0 <= seed < 1 << 64 for seed in self.search_seeds):
+            raise ValueError("search seeds must be unsigned 64-bit integers")
+        if any(value < 0 for value in self.search_budgets):
+            raise ValueError("search budgets cannot be negative")
+        if any(value < 0 for value in normalized_temperatures):
+            raise ValueError("temperatures cannot be negative")
+        for index, available in enumerate(self.search_metadata_mask):
+            if available and self.search_budgets[index] <= 0:
+                raise ValueError("available search metadata requires a positive budget")
+        if self.source_kind == "selfplay/mcts":
+            identities = (
+                self.task_id,
+                self.black_agent_id,
+                self.white_agent_id,
+                self.publication_sha256,
+                self.feature_schema_id,
+                self.search_config_sha256,
+            )
+            if any(not value for value in identities) or not all(
+                self.search_metadata_mask
+            ):
+                raise ValueError("MCTS self-play trajectories require complete identities")
         expected = self.compute_content_sha256()
         if self.content_sha256 and self.content_sha256 != expected:
             raise ValueError("trajectory content_sha256 does not match its contents")
@@ -219,49 +211,48 @@ class TrajectoryRecord:
 
     def compute_content_sha256(self) -> str:
         payload = {
-                "schema_version": self.schema_version,
-                "game_id": self.game_id,
-                "dataset_id": self.dataset_id,
-                "asset_sha256": self.asset_sha256,
-                "member_path": self.member_path,
-                "ordinal": self.ordinal,
-                "rules": self.rules,
-                "komi_half_points": self.komi_half_points,
-                "max_moves": self.max_moves,
-                "moves": self.moves,
-                "trainable_start_ply": self.trainable_start_ply,
-                "policy_row_offsets": self.policy_row_offsets,
-                "policy_actions": self.policy_actions,
-                "policy_values": self.policy_values,
-                "value_black": self.value_black,
-                "value_available": self.value_available,
-                "score_margin_black": self.score_margin_black,
-                "score_available": self.score_available,
-                "ownership_black": self.ownership_black,
-                "ownership_available": self.ownership_available,
+            "schema_version": self.schema_version,
+            "game_id": self.game_id,
+            "dataset_id": self.dataset_id,
+            "asset_sha256": self.asset_sha256,
+            "member_path": self.member_path,
+            "ordinal": self.ordinal,
+            "rules": self.rules,
+            "komi_half_points": self.komi_half_points,
+            "max_moves": self.max_moves,
+            "moves": self.moves,
+            "trainable_start_ply": self.trainable_start_ply,
+            "policy_row_offsets": self.policy_row_offsets,
+            "policy_actions": self.policy_actions,
+            "policy_values": self.policy_values,
+            "value_black": self.value_black,
+            "value_available": self.value_available,
+            "score_margin_black": self.score_margin_black,
+            "score_available": self.score_available,
+            "ownership_black": self.ownership_black,
+            "ownership_available": self.ownership_available,
+        }
+        payload.update(
+            {
+                "source_kind": self.source_kind,
+                "task_id": self.task_id,
+                "termination": self.termination,
+                "game_seed": self.game_seed,
+                "black_agent_id": self.black_agent_id,
+                "white_agent_id": self.white_agent_id,
+                "publication_sha256": self.publication_sha256,
+                "feature_schema_id": self.feature_schema_id,
+                "search_config_sha256": self.search_config_sha256,
+                "search_budgets": self.search_budgets,
+                "root_values": self.root_values,
+                "root_score_margins": self.root_score_margins,
+                "temperatures": self.temperatures,
+                "search_seeds": self.search_seeds,
+                "root_noise_mask": self.root_noise_mask,
+                "search_metadata_mask": self.search_metadata_mask,
+                "root_score_mask": self.root_score_mask,
             }
-        if self.schema_version >= 3:
-            payload.update(
-                {
-                    "source_kind": self.source_kind,
-                    "task_id": self.task_id,
-                    "termination": self.termination,
-                    "game_seed": self.game_seed,
-                    "black_agent_id": self.black_agent_id,
-                    "white_agent_id": self.white_agent_id,
-                    "publication_sha256": self.publication_sha256,
-                    "feature_schema_id": self.feature_schema_id,
-                    "search_config_sha256": self.search_config_sha256,
-                    "search_budgets": self.search_budgets,
-                    "root_values": self.root_values,
-                    "root_score_margins": self.root_score_margins,
-                    "temperatures": self.temperatures,
-                    "search_seeds": self.search_seeds,
-                    "root_noise_mask": self.root_noise_mask,
-                    "search_metadata_mask": self.search_metadata_mask,
-                    "root_score_mask": self.root_score_mask,
-                }
-            )
+        )
         return _sha256_json(payload)
 
 
@@ -282,8 +273,7 @@ class AnnotationRecord:
     content_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.schema_version not in SUPPORTED_RECORD_SCHEMA_VERSIONS:
-            raise ValueError("unsupported annotation record schema")
+        RECORD_SCHEMA.require(self.schema_version)
         try:
             bytes.fromhex(self.game_id)
         except ValueError as error:

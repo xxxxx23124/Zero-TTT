@@ -12,6 +12,8 @@ from pathlib import Path
 from types import UnionType
 from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
 
+from zero_ttt.versioning import EXPERIMENT_CONFIG_SCHEMA
+
 
 @dataclass(frozen=True, slots=True)
 class GameConfig:
@@ -211,42 +213,8 @@ def _construct_dataclass(cls: type[T], data: dict[str, Any], path: str) -> T:
     return cls(**kwargs)
 
 
-def _normalize_training_schedule(raw: dict[str, Any]) -> dict[str, Any]:
-    """Normalize legacy optimizer-step intervals at the configuration boundary."""
-
-    normalized = dict(raw)
-    training = normalized.get("training")
-    if not isinstance(training, dict):
-        return normalized
-    training = dict(training)
-    batch_size = training.get("batch_size")
-    accumulation = training.get("accumulation_steps")
-    if not isinstance(batch_size, int) or not isinstance(accumulation, int):
-        normalized["training"] = training
-        return normalized
-    effective_batch = batch_size * accumulation
-    aliases = (
-        ("warmup_steps", "warmup_samples"),
-        ("ema_update_interval", "ema_update_interval_samples"),
-        ("publish_interval", "publish_interval_samples"),
-    )
-    for legacy, canonical in aliases:
-        if legacy in training and canonical in training:
-            raise ValueError(
-                f"config.training: {legacy} and {canonical} cannot both be specified"
-            )
-        if legacy in training:
-            value = training.pop(legacy)
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise TypeError(f"config.training.{legacy}: expected int")
-            training[canonical] = value * effective_batch
-    normalized["training"] = training
-    return normalized
-
-
 def validate_config(config: ExperimentConfig) -> None:
-    if config.schema_version != 5:
-        raise ValueError(f"unsupported schema_version={config.schema_version}")
+    EXPERIMENT_CONFIG_SCHEMA.require(config.schema_version)
     if config.game.board_size != 19:
         raise ValueError("only 19x19 is supported")
     if config.game.history_length != 8:
@@ -343,11 +311,12 @@ def load_config(path: str | Path) -> ExperimentConfig:
 
 
 def config_from_mapping(raw: dict[str, Any]) -> ExperimentConfig:
-    """Build a strict config after converting supported legacy schedule keys."""
+    """Build an exact current-schema configuration."""
 
+    EXPERIMENT_CONFIG_SCHEMA.require(raw.get("schema_version"))
     config = _construct_dataclass(
         ExperimentConfig,
-        _normalize_training_schedule(raw),
+        raw,
         "config",
     )
     validate_config(config)

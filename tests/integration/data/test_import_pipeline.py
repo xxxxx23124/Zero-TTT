@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import zipfile
 from pathlib import Path
 
@@ -8,9 +9,26 @@ import pytest
 
 from zero_ttt.data.catalog import Catalog
 from zero_ttt.data.importers import KataGoSgfImporter
-from zero_ttt.data.manifest import ManifestAsset
+from zero_ttt.data.manifest import ManifestAsset, SourceManifest
 from zero_ttt.data.pipeline import import_manifest
 from zero_ttt.data.shards import ShardStore
+from zero_ttt.versioning import SOURCE_MANIFEST_SCHEMA
+
+
+def test_source_manifest_round_trip_and_previous_schema_rejection(
+    tmp_path: Path,
+    manifest_factory,
+) -> None:
+    asset = ManifestAsset("source.zip", "a" * 64, 1)
+    manifest = manifest_factory(asset)
+    path = tmp_path / "manifest.json"
+    manifest.save(path)
+    assert SourceManifest.load(path) == manifest
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = SOURCE_MANIFEST_SCHEMA.current - 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"source manifest.*expected v2"):
+        SourceManifest.load(path)
 
 
 def test_katago_importer_streams_records_and_structured_rejections(

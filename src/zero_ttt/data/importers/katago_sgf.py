@@ -14,12 +14,12 @@ from zero_ttt.config import GameConfig
 from zero_ttt.data.manifest import ManifestAsset, SourceManifest, sha256_file
 from zero_ttt.data.records import (
     ImportEvent,
-    RECORD_SCHEMA_VERSION,
     TrajectoryRecord,
     stable_game_id,
 )
 from zero_ttt.game.rules import BOARD_AREA, BOARD_SIZE, PASS_ACTION
 from zero_ttt.game.state import GameState
+from zero_ttt.versioning import RECORD_SCHEMA
 
 
 _START_TURN = re.compile(r"(?:^|,)startTurnIdx=(\d+)(?:,|$)")
@@ -262,7 +262,7 @@ def _build_trajectory(
         ordinal,
     )
     return TrajectoryRecord(
-        schema_version=RECORD_SCHEMA_VERSION,
+        schema_version=RECORD_SCHEMA.current,
         game_id=game_id,
         content_sha256="",
         dataset_id=manifest.dataset_id,

@@ -58,11 +58,9 @@ docker compose -f compose.yaml -f compose.data.yaml run --rm dev zero-ttt snapsh
 `snapshot-create` 输出不可变 snapshot ID。把该 ID 传给 `offline-imitation --snapshot`；正式运行
 前应在配置中把 `runtime.run_dir` 指向持久写入位置。本仓库不自动启动全量导入或长期训练。
 
-当前新写入格式为 record/shard/catalog v3；v2 shard 与 snapshot 保持兼容读取，v2 catalog
-原地增加 v3 控制字段。v1 仍会给出明确重建错误，工具不会自动删除运行产物。
-
-checkpoint 与 BF16 publication 当前统一使用 artifact schema v5。v4 及更早文件不会自动迁移；
-旧 full checkpoint 不能恢复，旧 publication 也不能用于自博弈，必须用当前 Learner 重新生成。
+当前新写入格式为 record/shard/catalog v4，配置与 checkpoint/publication 为 v6；其余内部格式见
+[版本矩阵](../architecture/versioning.md)。读取器只接受精确当前版本，旧 full checkpoint 不能
+恢复，旧 publication 也不能用于自博弈，必须用当前 Learner 重新生成。
 
 `third_party/open_spiel` 固定为 v2.0.1 指定提交；开发镜像从该源码和 Dockerfile 中锁定的
 Abseil/JSON/pybind/DDS 提交构建 `pyspiel`。
@@ -110,7 +108,9 @@ docker compose --profile katago run --rm katago-gtp
 ## 数据与清理
 
 - `runs/`、trajectory/annotation shards、SQLite 数据库和 KataGo 网络不进入 Git。
-- 当前重构不主动删除旧运行产物，但不再支持旧 replay、checkpoint 或 publication schema。
+- 程序不主动删除旧运行产物，也不支持旧 replay、checkpoint、publication 或 manifest schema。
+- 切换时保留原始 SGF/ZIP 与 KataGo 网络；确认挂载路径后，人工清理并重建 processed shard、
+  catalog、snapshot、mixture、自博弈任务和 run 产物。
 - `docker compose down` 保留命名缓存卷；只有用户明确决定时才使用 `down --volumes`。
 - 不把下载密钥、局域网凭据或未经核验的许可证信息写入镜像。
 

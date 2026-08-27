@@ -9,9 +9,10 @@ import pytest
 from zero_ttt.data.catalog import Catalog, TrajectoryLocator
 from zero_ttt.data.catalog_source import CatalogBatchSource, SnapshotPositionIndex
 from zero_ttt.data.manifest import ManifestAsset
-from zero_ttt.data.records import AnnotationRecord, RECORD_SCHEMA_VERSION
+from zero_ttt.data.records import AnnotationRecord
 from zero_ttt.data.shards import ShardStore
 from zero_ttt.game.rules import BOARD_AREA
+from zero_ttt.versioning import RECORD_SCHEMA
 
 
 def test_shard_local_sampling_is_position_weighted_and_deterministic() -> None:
@@ -86,7 +87,7 @@ def test_annotation_shards_are_loaded_at_most_once_per_microbatch(
         catalog.commit_trajectory_shard(trajectory_info, [record])
         for ply in range(record.trainable_position_count):
             annotation = AnnotationRecord(
-                schema_version=RECORD_SCHEMA_VERSION,
+                schema_version=RECORD_SCHEMA.current,
                 game_id=record.game_id,
                 ply=ply,
                 teacher_fingerprint="teacher-v1",

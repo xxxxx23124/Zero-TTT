@@ -15,6 +15,7 @@ import numpy as np
 
 from zero_ttt.data.catalog_source import CatalogBatchSource
 from zero_ttt.data.contracts import TrainBatch
+from zero_ttt.versioning import TRAINING_MIXTURE_SCHEMA
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,8 +37,9 @@ class TrainingMixtureManifest:
     content_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1 or not self.components:
-            raise ValueError("unsupported or empty training mixture")
+        TRAINING_MIXTURE_SCHEMA.require(self.schema_version)
+        if not self.components:
+            raise ValueError("training mixture cannot be empty")
         identities = [component.snapshot_id for component in self.components]
         if len(identities) != len(set(identities)):
             raise ValueError("mixture snapshot components must be unique")
@@ -80,6 +82,9 @@ class TrainingMixtureManifest:
     @classmethod
     def load(cls, path: str | Path) -> "TrainingMixtureManifest":
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("invalid training mixture manifest")
+        TRAINING_MIXTURE_SCHEMA.require(payload.get("schema_version"))
         try:
             manifest = cls(
                 schema_version=int(payload["schema_version"]),

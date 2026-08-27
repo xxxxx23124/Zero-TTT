@@ -4,7 +4,7 @@
 
 ## 已完成：2026-08 文档化与依赖决策
 
-- 当前 Trainer 已解耦为 `BatchSource`，并具有 EMA、checkpoint 和 publication。
+- 当前 Learner 已解耦为 `BatchSource`，并具有 EMA、checkpoint 和 publication。
 - 保留本地 19×19 Tromp–Taylor 棋规、特征编码与批量推理契约。
 - KataGo v1.17.2 保持教师/GTP；OpenSpiel v2.0.1 指定提交作为学生 MCTS 源码基线。
 - 接受统一训练生命周期、序列优先 NPZ 分片和可选棋力评级设计。
@@ -32,7 +32,7 @@
 ## 已完成：首版 OpenSpiel AlphaZero 垂直切片
 
 - 已实现本地 `GameState` 的薄 `pyspiel.Game/State`、自定义 Evaluator 和 64 simulations PUCT。
-- 已实现 16 棋局并发、固定 batch-16 GPU 后端、可恢复 task、v3 shard 和 mixture→Learner 闭环。
+- 已实现 16 棋局并发、固定 batch-16 GPU 后端、可恢复 task、v4 shard 和 mixture→Learner 闭环。
 - 下一步在 RTX 4090 上记录正式 publication 的显存、batch fill、规则耗时和 simulations/s，再决定是否提高预算。
 
 ## 下一阶段四：主动教师辅导

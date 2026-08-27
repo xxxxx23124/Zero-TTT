@@ -8,7 +8,6 @@
 
 ```json
 {
-  "schema_version": 1,
   "task_id": "uuid",
   "game_id": "content-hash",
   "ply": 120,
@@ -21,6 +20,8 @@
   "requested_outputs": ["policy", "value", "score", "ownership"]
 }
 ```
+
+协议尚未实现，因此草案不声明可运行的 schema 版本；实现时必须先登记到中央版本表。
 
 任务必须能独立重建局面。task ID 用于幂等提交；game ID 与 ply 必须命中已登记 trajectory。
 

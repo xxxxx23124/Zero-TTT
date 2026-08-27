@@ -1,4 +1,3 @@
-schema_version = 1
 file_name = "model.bin.gz"
 sha256 = "REPLACE_WITH_64_HEX_CHARACTERS"
 source_url = "https://katagotraining.org/networks/"

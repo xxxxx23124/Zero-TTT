@@ -46,10 +46,9 @@ microbatch 16 显存冒烟，只证明单个 microbatch 的驻留上限，不代
 
 ## 复现边界
 
-- schema v5 TOML 是模型、训练、执行、搜索、自博弈和运行参数的唯一事实来源。
-- checkpoint schema v5 保存配置哈希、fast/slow、优化器和随机状态；不迁移 v4 及更早产物。
-- publication 与 checkpoint 共用 schema v5，是带模型版本的不可变 BF16 slow 快照；旧 publication
-  同样不兼容，必须由当前 Learner 重新发布。
+- schema v6 TOML 是模型、训练、执行、搜索、自博弈和运行参数的唯一事实来源。
+- checkpoint 与 publication 共用 artifact schema v6，保存配置哈希、fast/slow、优化器和随机
+  状态；读取器只接受精确当前版本，已有产物必须由当前 Learner 重新生成。
 - 采集器写不可变样本分片，新的数据来源实现 `BatchSource`，不复制 Learner 或损失函数。
 - 采集器和 evaluator 只通过 publication 身份及持久数据与 Learner 交接，不共享模型地址。
 

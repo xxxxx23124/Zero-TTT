@@ -1,7 +1,7 @@
 # 公共契约
 
 数据与推理接口位于 `zero_ttt.data` 和 `zero_ttt.inference`；模型的稳定导入面位于
-`zero_ttt.model`。Learner、v3 持久 schema 和 OpenSpiel adapter 已实现；教师服务仍未实现。
+`zero_ttt.model`。Learner、v4 持久 schema 和 OpenSpiel adapter 已实现；教师服务仍未实现。
 
 ## TrainBatch
 
@@ -35,7 +35,7 @@ value 数组。一次搜索内 publication、特征 schema、规则和未来快�
 
 以下名称已作为版本化 Python 类型实现：
 
-- `TrajectoryRecord`：一盘完整、有序、从空棋盘和 moves 确定性重放的棋局；v2 明确不接受
+- `TrajectoryRecord`：一盘完整、有序、从空棋盘和 moves 确定性重放的棋局；当前格式不接受
   setup/handicap/initial-position，且持久化本局 `max_moves`。
 - `AnnotationRecord`：以 `(game_id, ply, teacher_fingerprint)` 连接的可追加教师标签。
 - `RatingSnapshot`：可选、评级池相关、带误差或 RD 的 agent 评测结果。

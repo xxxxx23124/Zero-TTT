@@ -9,8 +9,7 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-
-MANIFEST_SCHEMA_VERSION = 1
+from zero_ttt.versioning import SOURCE_MANIFEST_SCHEMA
 
 
 def sha256_file(path: str | Path) -> str:
@@ -49,8 +48,7 @@ class SourceManifest:
     assets: tuple[ManifestAsset, ...]
 
     def __post_init__(self) -> None:
-        if self.schema_version != MANIFEST_SCHEMA_VERSION:
-            raise ValueError("unsupported source manifest schema")
+        SOURCE_MANIFEST_SCHEMA.require(self.schema_version)
         if not self.dataset_id or not self.source_type or not self.license_id:
             raise ValueError("manifest source identity cannot be empty")
         if not self.assets:
@@ -82,7 +80,7 @@ class SourceManifest:
                 )
             )
         return cls(
-            schema_version=MANIFEST_SCHEMA_VERSION,
+            schema_version=SOURCE_MANIFEST_SCHEMA.current,
             dataset_id=dataset_id,
             source_type=source_type,
             license_id=license_id,
@@ -113,6 +111,7 @@ class SourceManifest:
     @classmethod
     def load(cls, path: str | Path) -> "SourceManifest":
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        SOURCE_MANIFEST_SCHEMA.require(raw.get("schema_version"))
         assets = tuple(ManifestAsset(**item) for item in raw.pop("assets"))
         return cls(assets=assets, **raw)
 

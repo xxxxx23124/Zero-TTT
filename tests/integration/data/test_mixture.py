@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 from argparse import Namespace
 
 import numpy as np
@@ -18,6 +19,7 @@ from zero_ttt.data import (
 from zero_ttt.data.manifest import ManifestAsset
 from zero_ttt.learner import Learner, LearnerDataIdentity
 from zero_ttt.training.checkpoint import CheckpointManager
+from zero_ttt.versioning import TRAINING_MIXTURE_SCHEMA
 
 
 @pytest.mark.parametrize("snapshot_id", ("z" * 64, "A" * 64, "a" * 63))
@@ -40,6 +42,33 @@ def test_mixture_cli_distinguishes_format_weight_and_snapshot_errors(tmp_path) -
         _mixture_create(Namespace(component=[f"{'a' * 64}=heavy"], output=output))
     with pytest.raises(ValueError, match="lowercase SHA-256"):
         _mixture_create(Namespace(component=[f"{'z' * 64}=1"], output=output))
+
+
+def test_previous_mixture_manifest_is_rejected_before_checksum(tmp_path) -> None:
+    path = tmp_path / "mixture.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": TRAINING_MIXTURE_SCHEMA.current - 1,
+                "components": [],
+                "content_sha256": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"training mixture.*expected v2"):
+        TrainingMixtureManifest.load(path)
+
+
+@pytest.mark.parametrize("payload", ([], "mixture", 2, None))
+def test_non_object_mixture_manifest_is_rejected(
+    tmp_path,
+    payload: object,
+) -> None:
+    path = tmp_path / "mixture.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid training mixture manifest"):
+        TrainingMixtureManifest.load(path)
 
 
 def test_mixture_manifest_source_and_learner_step(
@@ -67,7 +96,7 @@ def test_mixture_manifest_source_and_learner_step(
         second_snapshot = catalog.create_snapshot(1, validation_fraction=0.0)
 
     manifest = TrainingMixtureManifest(
-        1,
+        TRAINING_MIXTURE_SCHEMA.current,
         (
             MixtureComponent(first_snapshot, 0.8),
             MixtureComponent(second_snapshot, 0.2),

@@ -3,8 +3,9 @@ from __future__ import annotations
 import pytest
 
 from zero_ttt.data.manifest import ManifestAsset, SourceManifest
-from zero_ttt.data.records import RECORD_SCHEMA_VERSION, TrajectoryRecord
+from zero_ttt.data.records import TrajectoryRecord
 from zero_ttt.game.rules import BOARD_AREA
+from zero_ttt.versioning import RECORD_SCHEMA, SOURCE_MANIFEST_SCHEMA
 
 
 @pytest.fixture
@@ -21,7 +22,7 @@ def trajectory_factory():
     def make(asset_sha256: str = "a" * 64) -> TrajectoryRecord:
         moves = (0, 1, 19, 20)
         return TrajectoryRecord(
-            schema_version=RECORD_SCHEMA_VERSION,
+            schema_version=RECORD_SCHEMA.current,
             game_id="b" * 64,
             content_sha256="",
             dataset_id="test-data",
@@ -51,7 +52,7 @@ def trajectory_factory():
 def manifest_factory():
     def make(asset: ManifestAsset) -> SourceManifest:
         return SourceManifest(
-            schema_version=1,
+            schema_version=SOURCE_MANIFEST_SCHEMA.current,
             dataset_id="test-data",
             source_type="katago-g170-sgfs-zip",
             license_id="CC0-1.0",

@@ -11,9 +11,7 @@ from pathlib import Path
 from zero_ttt.data.manifest import ManifestAsset, SourceManifest
 from zero_ttt.data.records import AnnotationRecord, ImportEvent, TrajectoryRecord
 from zero_ttt.data.shards import ShardInfo, ShardStore
-
-
-CATALOG_SCHEMA_VERSION = 3
+from zero_ttt.versioning import CATALOG_SCHEMA
 
 
 def _hash_identity_field(digest: "hashlib._Hash", value: str) -> None:
@@ -51,12 +49,12 @@ class Catalog:
         self.store = store
         self.connection = sqlite3.connect(self.path, timeout=30.0)
         self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA journal_mode=WAL")
-        self.connection.execute("PRAGMA foreign_keys=ON")
-        self.connection.execute("PRAGMA synchronous=FULL")
-        self.connection.execute("PRAGMA busy_timeout=30000")
         try:
-            self._migrate()
+            self._initialize()
+            self.connection.execute("PRAGMA journal_mode=WAL")
+            self.connection.execute("PRAGMA foreign_keys=ON")
+            self.connection.execute("PRAGMA synchronous=FULL")
+            self.connection.execute("PRAGMA busy_timeout=30000")
         except BaseException:
             self.connection.close()
             raise
@@ -70,7 +68,31 @@ class Catalog:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def _migrate(self) -> None:
+    def _initialize(self) -> None:
+        existing = self.connection.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name NOT LIKE 'sqlite_%'
+            LIMIT 1
+            """
+        ).fetchone()
+        if existing is not None:
+            meta_table = self.connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='catalog_meta'"
+            ).fetchone()
+            if meta_table is None:
+                CATALOG_SCHEMA.require(None)
+            current = self.connection.execute(
+                "SELECT value FROM catalog_meta WHERE key='schema_version'"
+            ).fetchone()
+            raw_version = None if current is None else current["value"]
+            try:
+                actual_version: object = int(raw_version)
+            except (TypeError, ValueError):
+                actual_version = raw_version
+            CATALOG_SCHEMA.require(actual_version)
+            return
+
         with self.connection:
             self.connection.executescript(
                 """
@@ -184,41 +206,10 @@ class Catalog:
                     ON snapshot_trajectories(snapshot_id, ordinal);
                 """
             )
-            current = self.connection.execute(
-                "SELECT value FROM catalog_meta WHERE key='schema_version'"
-            ).fetchone()
-            if current is None:
-                self.connection.execute(
-                    "INSERT INTO catalog_meta(key,value) VALUES('schema_version',?)",
-                    (str(CATALOG_SCHEMA_VERSION),),
-                )
-            elif int(current["value"]) == 2:
-                asset_columns = {
-                    row["name"] for row in self.connection.execute("PRAGMA table_info(assets)")
-                }
-                if "source_kind" not in asset_columns:
-                    self.connection.execute(
-                        "ALTER TABLE assets ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'external'"
-                    )
-                if "task_id" not in asset_columns:
-                    self.connection.execute("ALTER TABLE assets ADD COLUMN task_id TEXT")
-                snapshot_columns = {
-                    row["name"]
-                    for row in self.connection.execute("PRAGMA table_info(snapshots)")
-                }
-                if "source_kind" not in snapshot_columns:
-                    self.connection.execute("ALTER TABLE snapshots ADD COLUMN source_kind TEXT")
-                if "task_id" not in snapshot_columns:
-                    self.connection.execute("ALTER TABLE snapshots ADD COLUMN task_id TEXT")
-                self.connection.execute(
-                    "UPDATE catalog_meta SET value=? WHERE key='schema_version'",
-                    (str(CATALOG_SCHEMA_VERSION),),
-                )
-            elif int(current["value"]) != CATALOG_SCHEMA_VERSION:
-                raise ValueError(
-                    f"unsupported catalog schema v{current['value']}; "
-                    "rebuild the catalog and snapshots for v2 or later"
-                )
+            self.connection.execute(
+                "INSERT INTO catalog_meta(key,value) VALUES('schema_version',?)",
+                (str(CATALOG_SCHEMA.current),),
+            )
 
     def register_asset(self, manifest: SourceManifest, asset: ManifestAsset) -> None:
         with self.connection:

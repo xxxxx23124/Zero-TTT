@@ -23,14 +23,13 @@ KataGo 教师 ─→ annotation shards ─────────────�
 
 - 固定 19×19 的 Tromp–Taylor 状态、合法着、历史、数子与特征编码。
 - 策略、价值、所有权和目差输出的 Transformer。
-- 与数据来源无关的 `Learner`、CPU FP32 EMA、checkpoint 和 BF16 publication；旧 Trainer
-  路径只是兼容导出。
+- 与数据来源无关的 `Learner`、CPU FP32 EMA、checkpoint 和 BF16 publication。
 - `TrajectoryRecord`/`AnnotationRecord`、NPZ ShardStore、SQLite Catalog、不可变 snapshot 和
   `CatalogBatchSource` 垂直切片。
 - `BatchSource`、带逐样本标签 mask 的 `TrainBatch`、`PositionEvaluator` 三个稳定边界。
 - KataGo v1.17.2 的独立 Docker 入口，以及固定版本的 OpenSpiel 源码子模块。
 - OpenSpiel 本地状态适配、PUCT、自博弈采集、固定 batch-16 publication evaluator 和推理 broker。
-- v3 自博弈审计记录、v2 数据兼容、来源过滤 snapshot 与 snapshot mixture 训练。
+- v4 自博弈审计记录、来源过滤 snapshot 与 snapshot mixture 训练。
 
 ## 当前未实现
 
@@ -49,6 +48,6 @@ KataGo 教师 ─→ annotation shards ─────────────�
 - Learner 与 evaluator 可同时驻留 GPU，但默认分阶段执行，不并发提交 CUDA 工作。
 - 所有运行、构建和测试只通过 Docker 支持。
 
-旧 replay/checkpoint 不自动删除，但 schema v2 及旧搜索记录不再受支持，也不提供迁移器。
+所有持久格式只接受[集中登记的当前版本](versioning.md)。旧运行产物不自动删除，也不提供迁移器。
 目标组件见 [Learner 与流程边界](learner-and-workflows.md)、
 [序列化训练数据](trajectory-storage.md)与[统一训练生命周期](../workflows/training-lifecycle.md)。

@@ -5,8 +5,7 @@ from torch import nn
 
 from zero_ttt.config import load_config
 from zero_ttt.model import PolicyValueTransformer
-from zero_ttt.training.gradients import clip_model_gradients
-from zero_ttt.training.trainer import parameters_are_finite
+from zero_ttt.training.gradients import clip_model_gradients, parameters_are_finite
 
 
 def test_parameter_finiteness_check_detects_nan_and_infinity() -> None:

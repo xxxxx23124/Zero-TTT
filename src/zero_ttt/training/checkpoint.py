@@ -14,8 +14,7 @@ from typing import Any
 
 import torch
 
-
-CHECKPOINT_SCHEMA_VERSION = 5
+from zero_ttt.versioning import MODEL_ARTIFACT_SCHEMA
 
 
 class CheckpointManager:
@@ -44,6 +43,7 @@ class CheckpointManager:
                 temporary.unlink()
 
     def save_full(self, step: int, payload: dict[str, Any]) -> Path:
+        MODEL_ARTIFACT_SCHEMA.require(payload.get("checkpoint_schema_version"))
         destination = self.checkpoint_dir / f"step_{step:012d}.pt"
         self._atomic_torch_save(payload, destination)
         checkpoints = sorted(self.checkpoint_dir.glob("step_*.pt"))
@@ -83,6 +83,7 @@ class CheckpointManager:
     ) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
             raise ValueError("run_id contains unsafe path characters")
+        MODEL_ARTIFACT_SCHEMA.require(metadata.get("checkpoint_schema_version"))
         bf16_state = {
             name: (
                 tensor.detach().to(device="cpu", dtype=torch.bfloat16)
@@ -107,6 +108,7 @@ class CheckpointManager:
             if not metadata_path.is_file() or not model_path.is_file():
                 raise FileExistsError(f"incomplete publication already exists: {run_id}:{step}")
             existing = json.loads(metadata_path.read_text(encoding="utf-8"))
+            MODEL_ARTIFACT_SCHEMA.require(existing.get("schema_version"))
             if (
                 existing.get("run_id") != run_id
                 or existing.get("optimizer_step") != step
@@ -117,6 +119,7 @@ class CheckpointManager:
             relative_model = model_path.relative_to(self.run_dir).as_posix()
             self._atomic_json_save(
                 {
+                    "schema_version": MODEL_ARTIFACT_SCHEMA.current,
                     "run_id": run_id,
                     "optimizer_step": step,
                     "samples_seen": samples_seen,
@@ -133,6 +136,7 @@ class CheckpointManager:
             self._atomic_torch_save(payload, model_path)
             digest = self._sha256(model_path)
             publication_metadata = {
+                "schema_version": MODEL_ARTIFACT_SCHEMA.current,
                 "run_id": run_id,
                 "optimizer_step": step,
                 "samples_seen": samples_seen,
@@ -147,6 +151,7 @@ class CheckpointManager:
         relative_model = (immutable / "model.pt").relative_to(self.run_dir).as_posix()
         self._atomic_json_save(
             {
+                "schema_version": MODEL_ARTIFACT_SCHEMA.current,
                 "run_id": run_id,
                 "optimizer_step": step,
                 "samples_seen": samples_seen,
@@ -163,6 +168,7 @@ class CheckpointManager:
         return immutable / "model.pt"
 
     def save_fault(self, step: int, payload: dict[str, Any], reason: str) -> Path:
+        MODEL_ARTIFACT_SCHEMA.require(payload.get("checkpoint_schema_version"))
         payload = {**payload, "fault_reason": reason, "fault_time_ns": time.time_ns()}
         destination = self.fault_dir / f"fault_{step:012d}_{time.time_ns()}.pt"
         self._atomic_torch_save(payload, destination)
@@ -176,22 +182,17 @@ class CheckpointManager:
         current = self.publication_dir / "current.json"
         if current.exists():
             payload = json.loads(current.read_text(encoding="utf-8"))
+            MODEL_ARTIFACT_SCHEMA.require(payload.get("schema_version"))
             path = self.run_dir / payload["model_path"]
             if not path.is_file() or self._sha256(path) != payload["sha256"]:
                 raise ValueError("current publication pointer is invalid")
             return path
-        legacy = self.publication_dir / "current.pt"
-        return legacy if legacy.exists() else None
+        return None
 
     @staticmethod
     def load(path: str | Path, map_location: str | torch.device = "cpu") -> dict[str, Any]:
         payload = torch.load(Path(path), map_location=map_location, weights_only=False)
-        actual_schema = payload.get("checkpoint_schema_version")
-        if actual_schema != CHECKPOINT_SCHEMA_VERSION:
-            raise ValueError(
-                f"unsupported checkpoint schema v{actual_schema}; "
-                f"expected v{CHECKPOINT_SCHEMA_VERSION}; migration is not supported"
-            )
+        MODEL_ARTIFACT_SCHEMA.require(payload.get("checkpoint_schema_version"))
         return payload
 
     @classmethod
@@ -213,7 +214,7 @@ def checkpoint_metadata(config_json: str, config_sha256: str) -> dict[str, Any]:
     # Parsing here also proves that only normalized JSON is embedded.
     json.loads(config_json)
     return {
-        "checkpoint_schema_version": CHECKPOINT_SCHEMA_VERSION,
+        "checkpoint_schema_version": MODEL_ARTIFACT_SCHEMA.current,
         "config_json": config_json,
         "config_sha256": config_sha256,
     }
