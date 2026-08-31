@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 import torch
 
 from zero_ttt.config import load_config
@@ -26,9 +27,9 @@ def targets() -> TrainingTargets:
         value=torch.tensor([0.0, -9.0]),
         ownership=torch.tensor([[0.0, 1.0], [-8.0, 8.0]]),
         score_margin=torch.tensor([0.0, -300.0]),
-        value_mask=torch.tensor([1.0, 0.0]),
-        ownership_mask=torch.tensor([1.0, 0.0]),
-        score_mask=torch.tensor([1.0, 0.0]),
+        value_mask=torch.tensor([True, False]),
+        ownership_mask=torch.tensor([True, False]),
+        score_mask=torch.tensor([True, False]),
     )
 
 
@@ -65,3 +66,8 @@ def test_all_zero_auxiliary_masks_produce_finite_zero_components() -> None:
     assert losses.ownership.item() == 0.0
     assert losses.score.item() == 0.0
     assert torch.isfinite(losses.total)
+
+
+def test_training_targets_reject_non_fp32_values() -> None:
+    with pytest.raises(TypeError, match="float32"):
+        replace(targets(), value=torch.zeros(2, dtype=torch.float64))

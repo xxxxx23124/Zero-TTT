@@ -1,4 +1,4 @@
-"""Atomic full checkpoints, immutable BF16 publications, and fault snapshots."""
+"""Atomic full checkpoints, immutable FP32 publications, and fault snapshots."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from typing import Any
 import torch
 
 from zero_ttt._io import atomic_write_json, fsync_directory, sha256_file
+from zero_ttt.precision import TENSOR_PRECISION, require_fp32_state
 from zero_ttt.versioning import MODEL_ARTIFACT_SCHEMA
 
 
@@ -45,8 +46,18 @@ class CheckpointManager:
             if temporary.exists():
                 temporary.unlink()
 
+    @staticmethod
+    def _validate_fp32_payload(payload: dict[str, Any]) -> None:
+        if payload.get("tensor_precision") != TENSOR_PRECISION:
+            raise ValueError(f"model artifact tensor precision must be {TENSOR_PRECISION}")
+        for state_name in ("fast_state", "slow_state"):
+            state = payload.get(state_name)
+            if isinstance(state, dict):
+                require_fp32_state(state, f"model artifact {state_name}")
+
     def save_full(self, step: int, payload: dict[str, Any]) -> Path:
         MODEL_ARTIFACT_SCHEMA.require(payload.get("checkpoint_schema_version"))
+        self._validate_fp32_payload(payload)
         destination = self.checkpoint_dir / f"step_{step:012d}.pt"
         self._atomic_torch_save(payload, destination)
         checkpoints = sorted(self.checkpoint_dir.glob("step_*.pt"))
@@ -69,6 +80,7 @@ class CheckpointManager:
     ) -> bool:
         identity_fields = (
             "checkpoint_schema_version",
+            "tensor_precision",
             "config_json",
             "config_sha256",
             "model_version",
@@ -101,6 +113,8 @@ class CheckpointManager:
         if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
             raise ValueError("run_id contains unsafe path characters")
         MODEL_ARTIFACT_SCHEMA.require(metadata.get("checkpoint_schema_version"))
+        if metadata.get("tensor_precision") != TENSOR_PRECISION:
+            raise ValueError(f"publication tensor precision must be {TENSOR_PRECISION}")
         payload = self._build_publication_payload(run_id, step, samples_seen, slow_state, metadata)
         run_directory = self.publication_dir / run_id
         run_directory.mkdir(parents=True, exist_ok=True)
@@ -126,20 +140,14 @@ class CheckpointManager:
         slow_state: dict[str, torch.Tensor],
         metadata: dict[str, Any],
     ) -> dict[str, Any]:
-        bf16_state = {
-            name: (
-                tensor.detach().to(device="cpu", dtype=torch.bfloat16)
-                if tensor.is_floating_point()
-                else tensor.detach().cpu()
-            )
-            for name, tensor in slow_state.items()
-        }
+        require_fp32_state(slow_state, "publication slow_state")
+        fp32_state = {name: tensor.detach().cpu() for name, tensor in slow_state.items()}
         return {
             **metadata,
             "model_version": step,
             "run_id": run_id,
             "samples_seen": samples_seen,
-            "slow_state": bf16_state,
+            "slow_state": fp32_state,
         }
 
     def _validate_existing_publication(
@@ -226,6 +234,7 @@ class CheckpointManager:
 
     def save_fault(self, step: int, payload: dict[str, Any], reason: str) -> Path:
         MODEL_ARTIFACT_SCHEMA.require(payload.get("checkpoint_schema_version"))
+        self._validate_fp32_payload(payload)
         payload = {**payload, "fault_reason": reason, "fault_time_ns": time.time_ns()}
         destination = self.fault_dir / f"fault_{step:012d}_{time.time_ns()}.pt"
         self._atomic_torch_save(payload, destination)
@@ -250,6 +259,7 @@ class CheckpointManager:
     def load(path: str | Path, map_location: str | torch.device = "cpu") -> dict[str, Any]:
         payload = torch.load(Path(path), map_location=map_location, weights_only=False)
         MODEL_ARTIFACT_SCHEMA.require(payload.get("checkpoint_schema_version"))
+        CheckpointManager._validate_fp32_payload(payload)
         return payload
 
     @classmethod
@@ -272,6 +282,7 @@ def checkpoint_metadata(config_json: str, config_sha256: str) -> dict[str, Any]:
     json.loads(config_json)
     return {
         "checkpoint_schema_version": MODEL_ARTIFACT_SCHEMA.current,
+        "tensor_precision": TENSOR_PRECISION,
         "config_json": config_json,
         "config_sha256": config_sha256,
     }

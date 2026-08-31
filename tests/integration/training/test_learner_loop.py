@@ -59,4 +59,5 @@ def test_one_optimizer_step_ema_publish_and_restore(tmp_path) -> None:
     floating = next(
         tensor for tensor in published["slow_state"].values() if tensor.is_floating_point()
     )
-    assert floating.dtype == torch.bfloat16
+    assert published["tensor_precision"] == "float32"
+    assert floating.dtype == torch.float32

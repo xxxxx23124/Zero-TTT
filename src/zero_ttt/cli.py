@@ -21,6 +21,7 @@ from zero_ttt.data.synthetic import SyntheticBatchSource
 from zero_ttt.game.rules import ACTION_SIZE, BOARD_SIZE
 from zero_ttt.learner import Learner, LearnerDataIdentity
 from zero_ttt.model import PolicyValueTransformer
+from zero_ttt.precision import configure_strict_fp32
 from zero_ttt.training.artifacts import ArtifactCoordinator
 from zero_ttt.training.checkpoint import CheckpointManager
 from zero_ttt.training.session import TrainingSession
@@ -128,6 +129,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _model_smoke(config_path: str) -> None:
+    configure_strict_fp32()
     config = load_config(config_path)
     device = torch.device(config.runtime.device)
     model = PolicyValueTransformer(config.model, config.execution).to(device).train()
@@ -135,14 +137,8 @@ def _model_smoke(config_path: str) -> None:
     board = torch.zeros(batch, config.model.input_planes, BOARD_SIZE, BOARD_SIZE, device=device)
     globals_ = torch.zeros(batch, config.model.global_features, device=device)
     legal = torch.ones(batch, ACTION_SIZE, dtype=torch.bool, device=device)
-    autocast = (
-        torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-        if device.type == "cuda"
-        else torch.autocast(device_type="cpu", enabled=False)
-    )
-    with autocast:
-        output = model(board, globals_, legal)
-        loss = output.policy_logits.float().mean() + output.value.float().mean()
+    output = model(board, globals_, legal)
+    loss = output.policy_logits.mean() + output.value.mean()
     loss.backward()
     print(
         json.dumps({"parameters": sum(p.numel() for p in model.parameters()), "loss": loss.item()})

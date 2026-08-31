@@ -24,7 +24,7 @@ flowchart LR
 
 - 固定 19×19 的 Tromp–Taylor 状态、合法着、历史、数子与特征编码。
 - 策略、价值、所有权和目差输出的 Transformer。
-- 与数据来源无关的 `Learner`、CPU FP32 EMA、checkpoint 和 BF16 publication。
+- 与数据来源无关的严格 FP32 `Learner`、CPU EMA、checkpoint 和 publication。
 - `TrajectoryRecord`/`AnnotationRecord`、NPZ ShardStore、SQLite Catalog、不可变 snapshot 和
   `CatalogBatchSource` 垂直切片。
 - `BatchSource`、带逐样本标签 mask 的 `TrainBatch`、`PositionEvaluator` 三个稳定边界。
@@ -48,6 +48,7 @@ flowchart LR
 - 采集器先写持久数据；KataGo 标签以 sidecar annotation 追加，不重写原始棋局。
 - Learner 与 evaluator 可同时驻留 GPU，但默认分阶段执行，不并发提交 CUDA 工作。
 - 所有运行、构建和测试只通过 Docker 支持。
+- 神经网络全链路固定严格 FP32，不提供精度参数或自动转换。
 
 ## 代码依赖方向
 

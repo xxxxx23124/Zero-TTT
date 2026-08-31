@@ -164,7 +164,7 @@ class BatchedInferenceBroker:
         output = self.evaluator.evaluate(batch)
         elapsed = time.perf_counter() - started
         logits = output.policy_logits.detach().cpu().numpy()
-        values = output.value.detach().float().reshape(len(unique)).cpu().numpy()
+        values = output.value.detach().reshape(len(unique)).cpu().numpy()
         ownership = self._optional_numpy(output.ownership)
         scores = self._optional_numpy(output.score_margin, reshape=len(unique))
         if len(logits) != len(unique):
@@ -187,7 +187,7 @@ class BatchedInferenceBroker:
     def _optional_numpy(tensor, *, reshape: int | None = None):
         if tensor is None:
             return None
-        value = tensor.detach().float()
+        value = tensor.detach()
         if reshape is not None:
             value = value.reshape(reshape)
         return value.cpu().numpy()

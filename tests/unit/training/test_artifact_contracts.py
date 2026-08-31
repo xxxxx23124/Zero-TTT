@@ -39,6 +39,7 @@ def test_checkpoint_and_publication_summaries_share_full_identity() -> None:
     )
     checkpoint = CheckpointSummary.from_payload(
         {
+            "tensor_precision": "float32",
             "config_json": config_json,
             "config_sha256": config_sha256,
             "learner_state": _state(),
@@ -52,6 +53,7 @@ def test_checkpoint_and_publication_summaries_share_full_identity() -> None:
     )
     publication = PublicationSummary.from_payload(
         {
+            "tensor_precision": "float32",
             "config_json": config_json,
             "config_sha256": config_sha256,
             "run_id": "run-a",
@@ -66,6 +68,7 @@ def test_checkpoint_and_publication_summaries_share_full_identity() -> None:
 def test_artifact_summaries_reject_invalid_hashes_and_identity_shapes() -> None:
     config_json, config_sha256 = _config()
     payload = {
+        "tensor_precision": "float32",
         "config_json": config_json,
         "config_sha256": config_sha256,
         "learner_state": _state(),
@@ -82,6 +85,7 @@ def test_artifact_summaries_reject_invalid_hashes_and_identity_shapes() -> None:
     with pytest.raises(ValueError, match="SHA-256 does not match"):
         PublicationSummary.from_payload(
             {
+                "tensor_precision": "float32",
                 "config_json": config_json,
                 "config_sha256": "0" * 64,
                 "run_id": "run-a",

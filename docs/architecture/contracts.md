@@ -26,7 +26,8 @@ policy 来源可以是人类实战落子、学生 MCTS 访问分布或教师搜�
 ## PositionEvaluator
 
 `InferenceBatch` 接收相同特征张量与合法着掩码；`InferenceOutput` 返回 policy logits、value，
-并可返回 ownership/score。实现必须暴露不可混淆的 `model_version`。
+并可返回 ownership/score。全部浮点输入输出必须是 FP32；实现必须暴露不可混淆的
+`model_version`。
 
 OpenSpiel Evaluator 将合法着 logits 归一化为 prior，并把“当前行棋方”value 转成双方
 value 数组。一次搜索内 publication、特征 schema、规则和未来快状态版本必须冻结。

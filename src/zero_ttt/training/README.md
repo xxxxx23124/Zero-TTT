@@ -12,7 +12,7 @@ publication 和可恢复应用服务。二者只消费 `BatchSource`/`TrainBatch
 
 Learner 独占训练模型、AdamW、梯度缓冲、CPU FP32 slow/EMA、随机状态和样本尺度调度：
 
-- GPU fast 参数、梯度和优化器状态保持 FP32，BF16 只用于 autocast 矩阵计算；
+- fast/slow 参数、激活、损失、梯度和优化器浮点状态均保持严格 FP32，CUDA TF32 关闭；
 - 梯度按模型声明的互斥参数组裁剪，非有限梯度使该次提交失败；
 - EMA、warmup、checkpoint 和 publication 边界按 `samples_seen` 定义；
 - microbatch 或累积步数变化不能偷偷改变样本时间尺度。
@@ -38,7 +38,7 @@ snapshot/mixture 身份。
 
 ## 失败边界
 
-- checkpoint、publication 和嵌入配置只接受中央登记的当前版本并严格加载。
+- checkpoint、publication 和嵌入配置只接受中央登记的当前版本与 FP32 身份并严格加载。
 - 数据身份不一致时默认失败；迁移必须由显式工作流发起并留下记录。
 - Learner 不解析 SGF/KataGo JSON，不运行游戏、MCTS、教师队列或控制台状态机。
 - 采集器与 evaluator 只通过不可变 publication 和持久数据交接，不共享模型地址。

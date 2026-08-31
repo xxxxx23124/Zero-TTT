@@ -25,6 +25,8 @@ class InferenceBatch:
             raise ValueError("board has the wrong shape")
         if self.global_features.shape != (batch, GLOBAL_FEATURES):
             raise ValueError("global_features has the wrong shape")
+        if self.board.dtype != torch.float32 or self.global_features.dtype != torch.float32:
+            raise TypeError("inference inputs must have torch.float32 dtype")
         if self.legal.shape != (batch, ACTION_SIZE) or self.legal.dtype != torch.bool:
             raise ValueError("legal has the wrong shape or dtype")
 
@@ -51,6 +53,9 @@ class InferenceOutput:
             (batch, 1),
         }:
             raise ValueError("score_margin has the wrong shape")
+        floating = (self.policy_logits, self.value, self.ownership, self.score_margin)
+        if any(tensor is not None and tensor.dtype != torch.float32 for tensor in floating):
+            raise TypeError("inference outputs must have torch.float32 dtype")
 
 
 @runtime_checkable

@@ -25,12 +25,12 @@ class SchemaSpec:
 
 EXPERIMENT_CONFIG_SCHEMA = SchemaSpec(
     "experiment config",
-    6,
+    7,
     "rewrite the config from a current template",
 )
 MODEL_ARTIFACT_SCHEMA = SchemaSpec(
     "model artifact",
-    6,
+    7,
     "start a new run and publish a current model artifact",
 )
 RECORD_SCHEMA = SchemaSpec(

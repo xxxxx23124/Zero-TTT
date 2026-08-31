@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from zero_ttt.config import load_config
@@ -44,4 +45,21 @@ def test_publication_evaluator_loads_and_hides_fixed_padding(tmp_path) -> None:
     torch.testing.assert_close(output.policy_logits[0], full_output.policy_logits[0])
     torch.testing.assert_close(output.value[0], full_output.value[0])
     assert torch.softmax(output.policy_logits, dim=-1)[0, 0].item() == 0.0
+    assert all(parameter.dtype == torch.float32 for parameter in evaluator._model.parameters())
+    assert output.policy_logits.dtype == torch.float32
+    assert output.value.dtype == torch.float32
     assert evaluator.publication_sha256 in evaluator.model_version
+
+
+def test_publication_rejects_non_fp32_weights(tmp_path) -> None:
+    config = load_config("configs/test.toml")
+    model = PolicyValueTransformer(config.model).to(torch.bfloat16)
+    manager = CheckpointManager(tmp_path, keep=1)
+    with pytest.raises(TypeError, match="float32"):
+        manager.save_publication(
+            "test-run",
+            3,
+            8,
+            model.state_dict(),
+            checkpoint_metadata(config.canonical_json(), config.sha256),
+        )

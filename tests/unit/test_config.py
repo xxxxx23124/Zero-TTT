@@ -33,7 +33,7 @@ def test_unknown_config_field_is_rejected(tmp_path: Path) -> None:
 
 def test_previous_config_schema_is_rejected(tmp_path: Path) -> None:
     source = Path("configs/test.toml").read_text(encoding="utf-8")
-    path = tmp_path / "v5.toml"
-    path.write_text(source.replace("schema_version = 6", "schema_version = 5"), encoding="utf-8")
-    with pytest.raises(ValueError, match=r"experiment config.*expected v6.*current template"):
+    path = tmp_path / "v6.toml"
+    path.write_text(source.replace("schema_version = 7", "schema_version = 6"), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"experiment config.*expected v7.*current template"):
         load_config(path)

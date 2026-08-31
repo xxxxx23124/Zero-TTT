@@ -57,11 +57,9 @@ class AxialRoPE2D(nn.Module):
         rotated_odd = even * sin + odd * cos
         return torch.stack((rotated_even, rotated_odd), dim=-1).flatten(-2)
 
-    def _trig(
-        self, positions: torch.Tensor, dtype: torch.dtype
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def _trig(self, positions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         angles = torch.outer(positions * self.scale, self.inv_freq)
-        return angles.cos().to(dtype=dtype)[None, None], angles.sin().to(dtype=dtype)[None, None]
+        return angles.cos()[None, None], angles.sin()[None, None]
 
     def apply(self, tensor: torch.Tensor) -> torch.Tensor:
         """Rotate board positions and leave every special token unchanged."""
@@ -69,8 +67,8 @@ class AxialRoPE2D(nn.Module):
         self.layout.validate(tensor)
         board = self.layout.board(tensor)
         special = self.layout.special(tensor)
-        row_cos, row_sin = self._trig(self.row_positions, tensor.dtype)
-        col_cos, col_sin = self._trig(self.col_positions, tensor.dtype)
+        row_cos, row_sin = self._trig(self.row_positions)
+        col_cos, col_sin = self._trig(self.col_positions)
         row = self._rotate_axis(board[..., : self.axis_dim], row_cos, row_sin)
         col = self._rotate_axis(
             board[..., self.axis_dim : self.rotary_dim],

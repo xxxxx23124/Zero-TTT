@@ -76,7 +76,9 @@ def test_model_rejects_invalid_input_contracts() -> None:
     board, global_features, legal = model_inputs()
     with pytest.raises(TypeError, match="boolean"):
         model(board, global_features, legal.float())
-    with pytest.raises(TypeError, match="same dtype"):
+    with pytest.raises(TypeError, match=r"torch\.float32"):
         model(board.double(), global_features, legal)
+    with pytest.raises(TypeError, match=r"torch\.float32"):
+        model(board.to(torch.bfloat16), global_features.to(torch.bfloat16), legal)
     with pytest.raises(ValueError, match="cannot be empty"):
         model(board[:0], global_features[:0], legal[:0])

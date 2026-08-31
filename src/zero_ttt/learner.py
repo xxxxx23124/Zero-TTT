@@ -14,6 +14,7 @@ import torch
 from zero_ttt.config import ExperimentConfig
 from zero_ttt.data.contracts import BatchSource, TrainBatch
 from zero_ttt.model import BasePolicyValueModel, PolicyValueTransformer
+from zero_ttt.precision import configure_strict_fp32, require_fp32_module
 from zero_ttt.training.checkpoint import CheckpointManager, checkpoint_metadata
 from zero_ttt.training.contracts import CheckpointPayload, LearnerDataIdentity
 from zero_ttt.training.ema import update_slow_weights
@@ -98,6 +99,7 @@ class Learner:
         data_identity: LearnerDataIdentity | None = None,
         run_id: str | None = None,
     ) -> None:
+        configure_strict_fp32()
         self.config = config
         self.device = torch.device(config.runtime.device)
         self.ema_device = torch.device(config.runtime.ema_device)
@@ -105,8 +107,10 @@ class Learner:
             self.device
         )
         self.slow = (slow_model or PolicyValueTransformer(config.model, config.execution)).to(
-            self.ema_device, dtype=torch.float32
+            self.ema_device
         )
+        require_fp32_module(self.fast, "fast model")
+        require_fp32_module(self.slow, "slow model")
         self.slow.load_state_dict(self.fast.state_dict())
         self.slow.eval().requires_grad_(False)
         self.fast.configure_execution(config.execution)
@@ -261,14 +265,8 @@ class Learner:
             ownership_mask=tensors[8],
             score_mask=tensors[9],
         )
-        autocast = (
-            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-            if self.device.type == "cuda"
-            else torch.autocast(device_type="cpu", enabled=False)
-        )
-        with autocast:
-            output = self.fast(board, global_features, legal)
-            losses = compute_losses(output, targets, self.config.training)
+        output = self.fast(board, global_features, legal)
+        losses = compute_losses(output, targets, self.config.training)
         if not torch.isfinite(losses.total):
             self._fault("non-finite training loss")
         (losses.total / accumulation).backward()

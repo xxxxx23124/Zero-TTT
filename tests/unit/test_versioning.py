@@ -32,8 +32,8 @@ def test_schema_registry_has_the_clean_break_versions() -> None:
         CONSOLE_STATE_SCHEMA,
     )
     assert [schema.current for schema in ALL_SCHEMAS] == [
-        6,
-        6,
+        7,
+        7,
         4,
         4,
         4,
@@ -46,11 +46,11 @@ def test_schema_registry_has_the_clean_break_versions() -> None:
     assert len({schema.name for schema in ALL_SCHEMAS}) == len(ALL_SCHEMAS)
 
 
-@pytest.mark.parametrize("actual", (None, 3, 5, "6", True, 7))
+@pytest.mark.parametrize("actual", (None, 3, 6, "7", True, 8))
 def test_schema_requires_the_exact_current_integer(actual: object) -> None:
     with pytest.raises(
         UnsupportedSchemaError,
-        match=r"experiment config.*expected v6.*current template",
+        match=r"experiment config.*expected v7.*current template",
     ):
         EXPERIMENT_CONFIG_SCHEMA.require(actual)
 

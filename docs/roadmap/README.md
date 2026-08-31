@@ -27,7 +27,7 @@
 
 - 执行全量 manifest/import，冻结正式 train/validation snapshot 并记录吞吐。
 - 在 RTX 4090 上验证累积 256、有效 batch 4096 的长时稳定性与恢复。
-- 实现只读 BF16 publication evaluator，并重新确认双模型驻留验收线。
+- 在严格 FP32 下执行长时训练与自博弈基准，分别记录两个阶段的显存和吞吐。
 
 ## 已完成：首版 OpenSpiel AlphaZero 垂直切片
 

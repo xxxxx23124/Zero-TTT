@@ -9,8 +9,8 @@ from zero_ttt.model import PolicyValueTransformer
 def test_production_and_baseline_experiment_switches() -> None:
     production = load_config("configs/rtx4090l.toml")
     baseline = load_config("configs/rtx4090l_baseline.toml")
-    assert production.run_name == "rtx4090l-625m"
-    assert production.runtime.run_dir == "runs/rtx4090l-625m"
+    assert production.run_name == "rtx4090l-625m-fp32"
+    assert production.runtime.run_dir == "runs/rtx4090l-625m-fp32"
     assert production.model.d_model == 1280
     assert production.model.n_heads == 20
     assert production.model.d_model // production.model.n_heads == 64
@@ -33,7 +33,8 @@ def test_production_and_baseline_experiment_switches() -> None:
     assert baseline.model.n_heads == production.model.n_heads
     assert baseline.model.n_layers == production.model.n_layers
     assert baseline.model.d_ff == production.model.d_ff
-    assert baseline.runtime.run_dir == "runs/rtx4090l-625m-baseline"
+    assert baseline.run_name == "rtx4090l-625m-baseline-fp32"
+    assert baseline.runtime.run_dir == "runs/rtx4090l-625m-baseline-fp32"
     assert not baseline.model.hypernet.enabled
     assert not baseline.model.depth_mixing.enabled
 

@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 
+from zero_ttt.precision import TENSOR_PRECISION
 from zero_ttt.versioning import MODEL_ARTIFACT_SCHEMA
 
 
@@ -67,6 +68,7 @@ class CheckpointSummary:
     def from_payload(cls, payload: object) -> CheckpointSummary:
         if not isinstance(payload, dict):
             raise ValueError("checkpoint payload is invalid")
+        _require_tensor_precision(payload, "checkpoint")
         if "data_identity" not in payload:
             raise ValueError("checkpoint data identity is incomplete")
         data_identity = LearnerDataIdentity.from_raw(payload["data_identity"])
@@ -100,7 +102,7 @@ class CheckpointSummary:
 
 @dataclass(frozen=True, slots=True)
 class CheckpointPayload:
-    """Validated in-memory checkpoint with an unchanged dictionary wire shape."""
+    """Validated in-memory checkpoint on the exact current dictionary wire shape."""
 
     summary: CheckpointSummary
     fast_state: dict[str, Any]
@@ -159,6 +161,7 @@ class CheckpointPayload:
     ) -> CheckpointPayload:
         wire = {
             "checkpoint_schema_version": MODEL_ARTIFACT_SCHEMA.current,
+            "tensor_precision": TENSOR_PRECISION,
             "config_json": config_json,
             "config_sha256": config_sha256,
             "learner_state": learner_state,
@@ -176,6 +179,7 @@ class CheckpointPayload:
         identity = self.summary.identity
         return {
             "checkpoint_schema_version": MODEL_ARTIFACT_SCHEMA.current,
+            "tensor_precision": TENSOR_PRECISION,
             "config_json": identity.config_json,
             "config_sha256": identity.config_sha256,
             "learner_state": dict(self.summary.learner_state),
@@ -199,6 +203,7 @@ class PublicationSummary:
     def from_payload(cls, payload: object) -> PublicationSummary:
         if not isinstance(payload, dict):
             raise ValueError("publication payload is invalid")
+        _require_tensor_precision(payload, "publication")
         return cls(
             identity=_artifact_identity(
                 run_id=payload.get("run_id"),
@@ -209,6 +214,11 @@ class PublicationSummary:
                 artifact="publication",
             )
         )
+
+
+def _require_tensor_precision(payload: dict[str, Any], artifact: str) -> None:
+    if payload.get("tensor_precision") != TENSOR_PRECISION:
+        raise ValueError(f"{artifact} tensor precision must be {TENSOR_PRECISION}")
 
 
 def _artifact_identity(

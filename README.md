@@ -4,12 +4,17 @@ Zero-TTT 是一个仅在 Docker 中维护的 19×19 围棋学生模型训练研�
 Transformer、Learner、EMA、checkpoint 和本地 Tromp–Taylor 棋规；目标训练路线是
 “监督冷启动 → OpenSpiel MCTS 自博弈 AlphaZero → 疑惑局面挑选 → 分级 KataGo 教师辅导”。
 
+> **长期精度策略：** Zero-TTT 的神经网络训练、EMA、模型产物和推理固定使用严格 FP32，
+> 同时关闭 BF16/FP16 autocast 与 TF32。项目在可预见的长期内不提供精度开关、自动降精度或
+> 加载时精度转换。这个选择优先考虑强化学习小梯度、超网络梯度链路的数值稳健性，以及统一
+> 精度带来的易用和易排错；详见[严格 FP32 策略](docs/architecture/precision.md)。
+
 ## 当前可用
 
 - 625M 与全关闭基线的策略—价值 Transformer 配置。
 - Tromp–Taylor 棋规、特征编码、模型损失和通用 `BatchSource` 训练接口。
 - g170 SGF Importer、版本化 trajectory/annotation NPZ、SQLite catalog 与快照采样。
-- `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v6 checkpoint 和不可变 publication。
+- `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v7 checkpoint 和不可变 publication。
 - 从不可变 publication 加载的固定 batch-16 evaluator、OpenSpiel PUCT 适配和可恢复 MCTS 自博弈采集。
 - trajectory/shard/catalog v4、来源过滤 snapshot 与加权 `MixtureBatchSource`。
 - Docker 交互式训练控制台、8 小时软停止、状态恢复和冷启动到 mixture 的 warm-start。

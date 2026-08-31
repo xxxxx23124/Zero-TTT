@@ -87,3 +87,17 @@ def test_broker_deduplicates_same_state_and_propagates_errors() -> None:
     broker.close()
     with pytest.raises(RuntimeError, match="closed"):
         broker.evaluate(state)
+
+
+def test_inference_contracts_reject_non_fp32_tensors() -> None:
+    with pytest.raises(TypeError, match="float32"):
+        InferenceBatch(
+            board=torch.zeros(1, 25, 19, 19, dtype=torch.float64),
+            global_features=torch.zeros(1, 5, dtype=torch.float64),
+            legal=torch.ones(1, 362, dtype=torch.bool),
+        )
+    with pytest.raises(TypeError, match="float32"):
+        InferenceOutput(
+            policy_logits=torch.zeros(1, 362, dtype=torch.float64),
+            value=torch.zeros(1, dtype=torch.float64),
+        )

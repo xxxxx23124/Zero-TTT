@@ -54,10 +54,8 @@ class BasePolicyValueModel(nn.Module, ABC):
             raise ValueError("global_features has the wrong shape")
         if legal_mask.shape != (batch, self.action_size):
             raise ValueError("legal_mask has the wrong shape")
-        if not board_features.is_floating_point() or not global_features.is_floating_point():
-            raise TypeError("board_features and global_features must be floating point")
-        if board_features.dtype != global_features.dtype:
-            raise TypeError("board_features and global_features must have the same dtype")
+        if board_features.dtype != torch.float32 or global_features.dtype != torch.float32:
+            raise TypeError("board_features and global_features must have torch.float32 dtype")
         if legal_mask.dtype != torch.bool:
             raise TypeError("legal_mask must have boolean dtype")
         if not (board_features.device == global_features.device == legal_mask.device):

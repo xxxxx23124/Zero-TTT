@@ -38,12 +38,13 @@ SQLite 只承担索引、任务、租约和校验控制，不保存大型训练 
 
 ## 模型与显存所有权
 
-只读 evaluator 从 BF16 slow publication 加载独立模型，不访问 Learner 内部地址。默认在同一
-进程中同时常驻训练模型与 evaluator，但训练和采集按阶段顺序运行，不并发提交 CUDA 工作。
+只读 evaluator 从 FP32 slow publication 加载独立模型，不访问 Learner 内部地址。训练和采集
+按阶段分别创建 Learner 或 evaluator，不并发提交 CUDA 工作，也不以双 GPU 模型同时常驻作为
+支持目标。
 
-现有正式冒烟同时驻留 GPU FP32 fast、CPU FP32 EMA 和 GPU BF16 publication，以训练
-microbatch 16 跑到峰值 `14.246 GiB reserved`；生产配置把梯度累积提高到 256。当前不增加模型换入换出；未来生命周期
-改动仍须保持 14.5 GiB 验收线。
+严格 FP32 的正式 batch-16 冒烟按阶段验收：默认模型 eager/compiled 训练峰值分别为
+`13.127/13.307 GiB reserved`，推理为 `3.979/4.295 GiB`；baseline eager 训练/推理为
+`11.766/3.053 GiB`。生产配置仍累积 256，单阶段继续遵守 14.5 GiB 验收线。
 
 ## 流程组合
 

@@ -1,5 +1,5 @@
-schema_version = 6
-run_name = "rtx4090l-625m-baseline"
+schema_version = 7
+run_name = "rtx4090l-625m-baseline-fp32"
 seed = 20260818
 
 [game]
@@ -80,6 +80,6 @@ inference_cache_size = 32768
 compile_inference = true
 
 [runtime]
-run_dir = "runs/rtx4090l-625m-baseline"
+run_dir = "runs/rtx4090l-625m-baseline-fp32"
 device = "cuda"
 ema_device = "cpu"

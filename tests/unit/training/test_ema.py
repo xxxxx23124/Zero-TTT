@@ -33,13 +33,12 @@ def test_ema_synchronizes_named_buffers() -> None:
     assert torch.equal(slow.num_batches_tracked, fast.num_batches_tracked)
 
 
-def test_fp32_ema_retains_updates_smaller_than_bfloat16_resolution() -> None:
-    fast = nn.Linear(1, 1, bias=False).float()
-    slow = nn.Linear(1, 1, bias=False).float()
+def test_fp32_ema_retains_small_updates() -> None:
+    fast = nn.Linear(1, 1, bias=False)
+    slow = nn.Linear(1, 1, bias=False)
     with torch.no_grad():
         slow.weight.fill_(1.0)
         fast.weight.fill_(1.001)
     update_slow_weights(slow, fast, samples=1, half_life_samples=1)
     assert slow.weight.dtype == torch.float32
     assert 1.0 < slow.weight.item() < fast.weight.item()
-    assert torch.tensor(slow.weight.item(), dtype=torch.bfloat16).item() == 1.0

@@ -7,7 +7,8 @@
 
 `PublicationPositionEvaluator` 校验 publication 文件哈希和当前 artifact schema，从嵌入配置
 重建 `PolicyValueTransformer`，严格加载 slow/EMA 权重，并将模型固定为 eval、无梯度状态。
-CUDA 上使用 BF16 权重与 autocast；CPU 保持 FP32。
+CPU 与 CUDA 都使用 FP32 权重和前向，CUDA matmul/cuDNN TF32 均关闭；非 FP32 publication
+或推理输入直接拒绝，不做自动转换。
 
 `model_version` 同时包含 run、模型版本和 publication SHA-256。一次搜索或一盘棋必须冻结该
 身份；publication 变化后不得复用旧 evaluator 或 cache。

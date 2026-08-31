@@ -21,6 +21,14 @@ class TrainingTargets:
     ownership_mask: torch.Tensor
     score_mask: torch.Tensor
 
+    def __post_init__(self) -> None:
+        floating = (self.policy, self.value, self.ownership, self.score_margin)
+        if any(tensor.dtype != torch.float32 for tensor in floating):
+            raise TypeError("training targets must have torch.float32 dtype")
+        masks = (self.value_mask, self.ownership_mask, self.score_mask)
+        if any(mask.dtype != torch.bool for mask in masks):
+            raise TypeError("training target masks must have torch.bool dtype")
+
 
 @dataclass(frozen=True, slots=True)
 class LossOutput:
@@ -42,8 +50,11 @@ def compute_losses(
     target: TrainingTargets,
     config: TrainingConfig,
 ) -> LossOutput:
-    log_policy = F.log_softmax(output.policy_logits.float(), dim=-1)
-    policy_target = target.policy.float()
+    predictions = (output.policy_logits, output.value, output.ownership, output.score_margin)
+    if any(tensor.dtype != torch.float32 for tensor in predictions):
+        raise TypeError("model loss inputs must have torch.float32 dtype")
+    log_policy = F.log_softmax(output.policy_logits, dim=-1)
+    policy_target = target.policy
     policy_terms = torch.where(
         policy_target > 0,
         policy_target * log_policy,
@@ -51,19 +62,19 @@ def compute_losses(
     )
     policy = -policy_terms.sum(dim=-1).mean()
     value_per_sample = F.mse_loss(
-        output.value.float().squeeze(-1),
-        target.value.float(),
+        output.value.squeeze(-1),
+        target.value,
         reduction="none",
     )
     value = _masked_mean(value_per_sample, target.value_mask)
     ownership_per_point = F.smooth_l1_loss(
-        output.ownership.float(),
-        target.ownership.float(),
+        output.ownership,
+        target.ownership,
         reduction="none",
     ).mean(dim=-1)
     ownership = _masked_mean(ownership_per_point, target.ownership_mask)
-    score_prediction = output.score_margin.float().squeeze(-1) / 400.0
-    score_target = (target.score_margin.float() / 400.0).clamp(-1.0, 1.0)
+    score_prediction = output.score_margin.squeeze(-1) / 400.0
+    score_target = (target.score_margin / 400.0).clamp(-1.0, 1.0)
     score_per_sample = F.smooth_l1_loss(
         score_prediction,
         score_target,

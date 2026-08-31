@@ -62,5 +62,5 @@ class SparseDepthWeightedAverage(DepthMixer):
             [raw_states[source] for source in self.source_depths[depth]],
             dim=0,
         )
-        weights = self.weights[str(depth)].to(dtype=stacked.dtype)
+        weights = self.weights[str(depth)]
         return torch.tensordot(weights, stacked, dims=1)

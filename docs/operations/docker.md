@@ -59,7 +59,7 @@ docker compose -f compose.yaml -f compose.data.yaml run --rm dev zero-ttt snapsh
 前应在配置中把 `runtime.run_dir` 指向持久写入位置。全量导入仍须显式执行；手动长期训练可由
 [Docker 训练控制台](training-console.md)编排，但不会无人值守地自动交替阶段。
 
-当前新写入格式为 record/shard/catalog v4，配置与 checkpoint/publication 为 v6；其余内部格式见
+当前新写入格式为 record/shard/catalog v4，配置与 checkpoint/publication 为 v7；其余内部格式见
 [版本矩阵](../architecture/versioning.md)。读取器只接受精确当前版本，旧 full checkpoint 不能
 恢复，旧 publication 也不能用于自博弈，必须用当前 Learner 重新生成。
 
@@ -91,7 +91,8 @@ zero-ttt offline-imitation --config configs/rtx4090l.toml \
 `selfplay-collect` 的 JSON 摘要包含真实与补齐 evaluation 数、满批比例、推理延迟、
 simulations/s、棋规 CPU 总耗时及 GPU 峰值；RTX 4090 正式冒烟应留存该输出。
 
-生产显存测试使用 `scripts/model_smoke_test.py` 和 CUDA 正式配置，成本远高于 CPU 单元测试，
+生产显存测试使用 `scripts/model_smoke_test.py` 和 CUDA 正式配置，按训练/推理阶段分别测量。
+快速 eager 验收可传 `--disable-compile --accumulation-steps 1`；成本远高于 CPU 单元测试，
 不应在每次文档修改后运行。
 
 ## KataGo

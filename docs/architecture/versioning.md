@@ -5,8 +5,8 @@
 
 | 格式 | 当前版本 | 旧产物处理 |
 | --- | ---: | --- |
-| 实验配置 | v6 | 从当前模板重新填写 |
-| checkpoint、publication 与 publication 索引 | v6 | 新建 run 并重新发布 |
+| 实验配置 | v7 | 从当前模板重新填写 |
+| checkpoint、publication 与 publication 索引 | v7 | 新建 run 并重新发布 |
 | trajectory / annotation record | v4 | 重新导入或采集 |
 | NPZ shard | v4 | 重新生成 processed 数据 |
 | SQLite catalog | v4 | 重建 catalog 与 snapshot |

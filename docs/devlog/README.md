@@ -16,6 +16,7 @@ YYYY-MM-DD-short-topic.md
 
 | 日期 | 主题 | 结果摘要 | 相关决策 |
 | --- | --- | --- | --- |
+| 2026-09-01 | [全链路严格 FP32](2026-09-01-strict-fp32.md) | 训练、EMA、v7 产物与推理统一 FP32；默认模型分阶段显存通过 14.5 GiB 线 | D-040 |
 | 2026-08-22 | [OpenSpiel、AlphaZero 与序列数据路线](2026-08-22-openspiel-trajectory-lifecycle.md) | 固定 OpenSpiel v2.0.1；默认改为 MCTS AlphaZero；接受整盘序列、NPZ 分片和可选评级 | D-036 至 D-038 |
 | 2026-08-22 | [Learner、自博弈与分级教师文档重构](2026-08-22-learner-selfplay-curriculum.md) | 接受 Learner/采集分离、本地纯策略自博弈、可选 MCTS 与 Human-SL 课程边界；只改文档 | D-032 至 D-035 |
 | 2026-08-20 | [转向 KataGo 教师与解耦训练](2026-08-20-katago-transition.md) | 删除内部 MCTS，训练改用公共契约，KataGo/Docker 与新路线完成骨架 | D-027 至 D-031 |
@@ -60,3 +61,4 @@ YYYY-MM-DD-short-topic.md
 - 失败实验和推翻的假设同样保留。
 - 形成长期约束的选择必须同步到 `../decisions/README.md`。
 - 日志引用实验产物时使用仓库相对路径，并注明生成该产物的配置或提交。
+- 历史日志保留当时的 BF16/FP16 实验事实；当前受支持策略以架构和决策文档为准。

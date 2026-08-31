@@ -58,7 +58,7 @@ class SharedDynamicLowRank(BlockResidualPlugin):
         batch = hidden.shape[0]
         context = scale_gradient(context, self.context_gradient_scale)
         encoded = self.context_projection(self.context_norm(context))
-        layer = torch.matmul(layer_selector, self.layer_embedding.weight).to(dtype=encoded.dtype)
+        layer = torch.matmul(layer_selector, self.layer_embedding.weight)
         encoded = F.silu(encoded + layer)
         raw_a = torch.tanh(self.a_head(encoded))
         raw_b = torch.tanh(self.b_head(encoded))
@@ -69,8 +69,8 @@ class SharedDynamicLowRank(BlockResidualPlugin):
         with torch.no_grad():
             a_saturation = (raw_a.abs() >= 0.95).float().mean()
             b_saturation = (raw_b.abs() >= 0.95).float().mean()
-            dynamic_rms = dynamic.float().square().mean().sqrt()
-            static_rms = static_output.float().square().mean().sqrt()
+            dynamic_rms = dynamic.square().mean().sqrt()
+            static_rms = static_output.square().mean().sqrt()
         return BlockResidualOutput(
             dynamic,
             a_saturation,

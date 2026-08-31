@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 
+from zero_ttt.precision import configure_strict_fp32
 
 EXPECTED_TORCH_PREFIX = "2.13.0"
 EXPECTED_CUDA = "13.2"
@@ -26,12 +27,18 @@ def command_output(command: list[str]) -> str:
 
 
 def main() -> None:
+    configure_strict_fp32()
+
     workspace = Path("/workspace")
     assert workspace.is_dir(), "/workspace is missing"
     assert (workspace / "README.md").is_file(), "project bind mount is missing"
     assert shutil.which("nvcc"), "nvcc is missing; use the devel image"
 
-    print(command_output(["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"]))
+    print(
+        command_output(
+            ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"]
+        )
+    )
     print(command_output(["nvcc", "--version"]).splitlines()[-1])
     print(f"Python:  {shutil.which('python')}")
     print(f"PyTorch: {torch.__version__}")
@@ -42,21 +49,24 @@ def main() -> None:
     assert torch.version.cuda == EXPECTED_CUDA, torch.version.cuda
     assert torch.cuda.is_available(), "torch.cuda.is_available() returned False"
     assert torch.backends.cudnn.is_available(), "cuDNN is unavailable"
+    assert torch.get_float32_matmul_precision() == "highest"
+    assert not torch.backends.cuda.matmul.allow_tf32
+    assert not torch.backends.cudnn.allow_tf32
 
     device = torch.device("cuda:0")
     capability = torch.cuda.get_device_capability(device)
     assert capability == EXPECTED_COMPUTE_CAPABILITY, capability
 
     generator = torch.Generator(device=device).manual_seed(0)
-    left = torch.randn((1024, 1024), device=device, dtype=torch.float16, generator=generator)
-    right = torch.randn((1024, 1024), device=device, dtype=torch.float16, generator=generator)
+    left = torch.randn((1024, 1024), device=device, dtype=torch.float32, generator=generator)
+    right = torch.randn((1024, 1024), device=device, dtype=torch.float32, generator=generator)
     result = left @ right
     torch.cuda.synchronize(device)
-    checksum = result.float().mean().item()
+    checksum = result.mean().item()
     assert math.isfinite(checksum), checksum
 
     print(f"GPU:     {torch.cuda.get_device_name(device)} (SM {capability[0]}.{capability[1]})")
-    print(f"GPU matrix multiplication passed; checksum={checksum:.6f}")
+    print(f"Strict FP32 GPU matrix multiplication passed; checksum={checksum:.6f}")
     print("Zero-TTT Docker GPU smoke test passed.")
 
 
