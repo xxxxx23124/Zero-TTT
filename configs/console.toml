@@ -3,7 +3,7 @@ schema_version = 2
 experiment_config = "rtx4090l.toml"
 catalog_path = "/datasets/work/catalog/catalog.sqlite"
 store_root = "/datasets/work/processed"
-cold_start_snapshot_id = "0000000000000000000000000000000000000000000000000000000000000000"
+cold_start_snapshot_id = "918697c732ee388bef5a6310c1647443d71d85dc5c6798b83ba7eaf2d607139b"
 max_runtime_hours = 8.0
 
 [mixture]
