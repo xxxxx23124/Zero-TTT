@@ -4,7 +4,8 @@ import ast
 from pathlib import Path
 
 FORBIDDEN_IMPORTS = {
-    package: {"cli", "console", "workflow"} for package in ("game", "model", "data", "training")
+    package: {"cli", "console", "control", "dashboard", "observability", "workflow"}
+    for package in ("game", "model", "data", "training")
 }
 
 

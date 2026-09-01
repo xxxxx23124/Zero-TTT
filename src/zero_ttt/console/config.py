@@ -1,4 +1,4 @@
-"""Strict zero-argument console configuration."""
+"""Strict file-backed console configuration."""
 
 from __future__ import annotations
 
@@ -14,6 +14,12 @@ DEFAULT_CONSOLE_CONFIG = Path("configs/console.toml")
 
 
 @dataclass(frozen=True, slots=True)
+class MixtureWeights:
+    selfplay: float
+    cold_start: float
+
+
+@dataclass(frozen=True, slots=True)
 class ConsoleConfig:
     schema_version: int
     experiment_config: Path
@@ -21,6 +27,7 @@ class ConsoleConfig:
     store_root: Path
     cold_start_snapshot_id: str
     max_runtime_hours: float
+    mixture: MixtureWeights
 
     @property
     def max_runtime_seconds(self) -> float:
@@ -34,6 +41,31 @@ def _configured_path(value: object, field: str, parent: Path) -> Path:
     return path if path.is_absolute() else (parent / path).resolve()
 
 
+def _positive_weight(value: object, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(f"console.mixture.{field} must be numeric")
+    weight = float(value)
+    if not math.isfinite(weight) or weight <= 0:
+        raise ValueError(f"console.mixture.{field} must be finite and positive")
+    return weight
+
+
+def _mixture_weights(value: object) -> MixtureWeights:
+    if not isinstance(value, dict):
+        raise TypeError("console.mixture must be a table")
+    expected = {"selfplay_weight", "cold_start_weight"}
+    unknown = sorted(set(value) - expected)
+    missing = sorted(expected - set(value))
+    if unknown or missing:
+        detail = unknown or missing
+        kind = "unknown" if unknown else "missing"
+        raise ValueError(f"console.mixture: {kind} fields: {', '.join(detail)}")
+    return MixtureWeights(
+        selfplay=_positive_weight(value["selfplay_weight"], "selfplay_weight"),
+        cold_start=_positive_weight(value["cold_start_weight"], "cold_start_weight"),
+    )
+
+
 def load_console_config(path: str | Path = DEFAULT_CONSOLE_CONFIG) -> ConsoleConfig:
     config_path = Path(path)
     with config_path.open("rb") as handle:
@@ -45,6 +77,7 @@ def load_console_config(path: str | Path = DEFAULT_CONSOLE_CONFIG) -> ConsoleCon
         "store_root",
         "cold_start_snapshot_id",
         "max_runtime_hours",
+        "mixture",
     }
     unknown = sorted(set(raw) - expected)
     missing = sorted(expected - set(raw))
@@ -76,4 +109,5 @@ def load_console_config(path: str | Path = DEFAULT_CONSOLE_CONFIG) -> ConsoleCon
         store_root=_configured_path(raw["store_root"], "store_root", parent),
         cold_start_snapshot_id=snapshot_id,
         max_runtime_hours=hours,
+        mixture=_mixture_weights(raw["mixture"]),
     )

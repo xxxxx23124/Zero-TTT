@@ -11,12 +11,16 @@ def _write(path: Path, snapshot: str = "a" * 64, hours: str = "8.0") -> None:
     path.write_text(
         "\n".join(
             (
-                "schema_version = 1",
+                "schema_version = 2",
                 'experiment_config = "experiment.toml"',
                 'catalog_path = "catalog.sqlite"',
                 'store_root = "processed"',
                 f'cold_start_snapshot_id = "{snapshot}"',
                 f"max_runtime_hours = {hours}",
+                "",
+                "[mixture]",
+                "selfplay_weight = 0.8",
+                "cold_start_weight = 0.2",
                 "",
             )
         ),
@@ -32,6 +36,8 @@ def test_console_config_is_strict_and_resolves_relative_paths(tmp_path: Path) ->
     assert config.catalog_path == tmp_path / "catalog.sqlite"
     assert config.store_root == tmp_path / "processed"
     assert config.max_runtime_seconds == 8 * 60 * 60
+    assert config.mixture.selfplay == 0.8
+    assert config.mixture.cold_start == 0.2
 
 
 @pytest.mark.parametrize(

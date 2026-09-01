@@ -88,8 +88,11 @@ class TrainingDataPlanner:
         manifest = TrainingMixtureManifest(
             TRAINING_MIXTURE_SCHEMA.current,
             (
-                MixtureComponent(selfplay_snapshot, 0.8),
-                MixtureComponent(self.settings.cold_start_snapshot_id, 0.2),
+                MixtureComponent(selfplay_snapshot, self.settings.mixture.selfplay),
+                MixtureComponent(
+                    self.settings.cold_start_snapshot_id,
+                    self.settings.mixture.cold_start,
+                ),
             ),
         )
         manifest.save(self.console_dir / "mixtures" / f"{manifest.content_sha256}.json")

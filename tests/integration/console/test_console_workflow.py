@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from zero_ttt.config import load_config
-from zero_ttt.console.config import ConsoleConfig
+from zero_ttt.console.config import ConsoleConfig, MixtureWeights
 from zero_ttt.console.engine import TrainingConsole
 from zero_ttt.console.state import Operation, TrainingPhase
 from zero_ttt.data.catalog import Catalog
@@ -152,6 +152,7 @@ def _console(tmp_path: Path) -> TrainingConsole:
         store_root=store_root,
         cold_start_snapshot_id=cold_snapshot,
         max_runtime_hours=1.0,
+        mixture=MixtureWeights(0.8, 0.2),
     )
     return TrainingConsole(settings, clock=OneStepClock(), output=lambda _line: None)
 
@@ -173,6 +174,7 @@ def test_cold_train_warm_start_and_restart_status(tmp_path: Path) -> None:
         store_root=store_root,
         cold_start_snapshot_id=cold_snapshot,
         max_runtime_hours=1.0,
+        mixture=MixtureWeights(0.8, 0.2),
     )
     console = TrainingConsole(settings, clock=OneStepClock(), output=lambda _line: None)
     console.reconcile()
@@ -208,6 +210,7 @@ def test_collection_soft_stops_after_one_complete_actor_round(tmp_path: Path) ->
         store_root=store_root,
         cold_start_snapshot_id=cold_snapshot,
         max_runtime_hours=1.0,
+        mixture=MixtureWeights(0.8, 0.2),
     )
     console = TrainingConsole(settings, clock=OneStepClock(), output=lambda _line: None)
     console.reconcile()

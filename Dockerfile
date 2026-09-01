@@ -55,6 +55,6 @@ ENV ZERO_TTT_OPEN_SPIEL_REVISION=112b77704631fc2ce7ad8e4581f6ca09798ce15a
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN python -m pip install --break-system-packages --editable ".[dev]"
+RUN python -m pip install --break-system-packages --editable ".[dev,dashboard]"
 
 CMD ["/bin/bash"]

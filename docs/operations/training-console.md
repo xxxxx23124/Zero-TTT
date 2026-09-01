@@ -11,6 +11,7 @@ publication 和自博弈采集器，不管理学习率、梯度累积、MCTS 或
 - `catalog_path` 和 `store_root` 默认使用 Compose 的 `/datasets/work` 命名卷；
 - `cold_start_snapshot_id` 必须替换为已经创建并验证的 64 位 train snapshot ID；
 - `max_runtime_hours` 默认 8 小时，每次选择采集、训练或 warm-start 时重新计时。
+- `[mixture]` 保存自博弈和冷启动 rehearsal 权重；当前模板为 `0.8/0.2`。
 
 占位的全零 snapshot 会被配置校验拒绝。控制台不会猜测监督数据集，也不会自动导入原始数据。
 
@@ -30,6 +31,33 @@ checkpoint 中的发布边界。相同 run 的 publication 超前或同 step 冲
 3. 开始训练；
 4. warm-start；
 5. 退出。
+
+同一功能也提供非交互命令，供容器内训练代理调用：
+
+```bash
+zero-ttt console --config configs/console.toml status --json
+zero-ttt console --config configs/console.toml reconcile --events jsonl
+zero-ttt console --config configs/console.toml train --events jsonl
+zero-ttt console --config configs/console.toml collect --events jsonl
+zero-ttt console --config configs/console.toml warm-start --events jsonl
+```
+
+## NiceGUI 与 TensorBoard
+
+```bash
+docker compose up --build training-ui
+```
+
+该命令会一并启动 `training-agent` 和 `tensorboard`。NiceGUI 只绑定本机
+`http://127.0.0.1:8080`，TensorBoard 只绑定 `http://127.0.0.1:6006`；训练代理只在 Compose
+内部网络开放。UI 不编辑配置，提供训练、MCTS 收集、warm-start、重新校验和安全暂停。
+
+训练代理是唯一子进程所有者，同一时间只运行一个操作。安全暂停发送 SIGTERM，训练在当前
+optimizer step 后保存 checkpoint/publication；采集在当前完整 actor 轮次封存后停止。UI 状态
+来自代理缓存，完整 checkpoint 只在启动和操作前 reconcile 时加载。
+
+TensorBoard 日志写入 `runtime.run_dir/tensorboard/<run_id>`。恢复训练会以 checkpoint step
+清除其后的残留事件，避免异常退出留下重复曲线。
 
 状态中的“未纳入最新训练 snapshot”是集合差：它表示尚未进入当前 checkpoint 数据身份的完整
 自博弈棋局，不表示随机采样已经逐一训练过 snapshot 内的所有棋局。

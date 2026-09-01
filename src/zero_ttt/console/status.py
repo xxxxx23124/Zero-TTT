@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from zero_ttt.console.artifacts import ArtifactConsistency, ArtifactInspection
@@ -31,6 +31,14 @@ class ConsoleStatus:
     mixture_manifest_sha256: str
     last_operation: str
     last_outcome: str
+
+
+def status_payload(status: ConsoleStatus) -> dict[str, object]:
+    payload = asdict(status)
+    for field in ("checkpoint_path", "publication_path"):
+        value = payload[field]
+        payload[field] = None if value is None else str(value)
+    return payload
 
 
 _CONSISTENCY_MESSAGES = {

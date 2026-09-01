@@ -6,10 +6,13 @@ import dataclasses
 import hashlib
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from zero_ttt.config import ExperimentConfig, load_config
 from zero_ttt.console.config import ConsoleConfig
+from zero_ttt.console.events import ConsoleEventSink, NullEventSink
 from zero_ttt.console.planning import TrainingDataPlan, TrainingDataPlanner
 from zero_ttt.console.runtime import RuntimeBudget, SoftStopSignals
 from zero_ttt.console.state import (
@@ -24,6 +27,14 @@ from zero_ttt.console.state import (
 from zero_ttt.console.status import (
     ConsoleStatus,
     inspect_status,
+    status_payload,
+)
+from zero_ttt.console.telemetry import (
+    configuration_summary,
+    publication_identity,
+    reconciled_inspection,
+    training_finished_payload,
+    training_step_payload,
 )
 from zero_ttt.data.catalog import Catalog
 from zero_ttt.data.shards import ShardStore
@@ -31,6 +42,10 @@ from zero_ttt.training.artifacts import ArtifactCoordinator, PublishedArtifacts
 from zero_ttt.training.checkpoint import CheckpointManager
 from zero_ttt.training.contracts import LearnerDataIdentity
 from zero_ttt.training.session import TrainingSession
+
+if TYPE_CHECKING:
+    from zero_ttt.selfplay.collector import CollectionSummary
+    from zero_ttt.selfplay.service import SelfPlayService
 
 
 class TrainingConsole:
@@ -41,6 +56,7 @@ class TrainingConsole:
         clock: Callable[[], float] = time.monotonic,
         output: Callable[[str], None] = print,
         input_fn: Callable[[str], str] = input,
+        events: ConsoleEventSink | None = None,
     ) -> None:
         self.settings = settings
         self.config: ExperimentConfig = load_config(settings.experiment_config)
@@ -73,6 +89,7 @@ class TrainingConsole:
         self.clock = clock
         self.output = output
         self.input = input_fn
+        self.events = events or NullEventSink()
 
     def _save_state(self, state: ConsoleState) -> None:
         self.state_store.save(state)
@@ -81,12 +98,21 @@ class TrainingConsole:
     def _begin(self, operation: Operation) -> None:
         state = transition(self.state, operation)
         self._save_state(dataclasses.replace(state, last_operation=operation.value))
+        self.events.emit(
+            "operation_started",
+            {"operation": operation.value, "phase": self.state.phase.value},
+        )
 
     def _finish(self, outcome: str) -> None:
+        operation = self.state.operation.value
         stopping = transition(self.state, Operation.SOFT_STOPPING)
         self._save_state(stopping)
         ready = transition(stopping, Operation.READY)
         self._save_state(dataclasses.replace(ready, last_outcome=outcome))
+        self.events.emit(
+            "operation_finished",
+            {"operation": operation, "phase": self.state.phase.value, "outcome": outcome},
+        )
 
     def _fail(self, error: Exception) -> None:
         try:
@@ -95,6 +121,14 @@ class TrainingConsole:
             failed = dataclasses.replace(self.state, operation=Operation.FAILED)
         self._save_state(
             dataclasses.replace(failed, last_outcome=f"{type(error).__name__}: {error}")
+        )
+        self.events.emit(
+            "operation_failed",
+            {
+                "operation": self.state.last_operation,
+                "error_type": type(error).__name__,
+                "error": str(error),
+            },
         )
 
     def _catalog(self) -> Catalog:
@@ -141,12 +175,12 @@ class TrainingConsole:
             return f"validated after previous failure; {outcome}".strip("; ")
         return outcome
 
-    def reconcile(self) -> None:
+    def reconcile(self) -> ConsoleStatus:
         try:
             self._validate_reconcile_inputs()
             inspection = self.artifacts.inspect()
             inferred_phase = self._checkpoint_phase(inspection.checkpoint)
-            self.artifacts.reconcile(inspection)
+            publication_path = self.artifacts.reconcile(inspection)
             reconciled = dataclasses.replace(
                 self.state,
                 phase=inferred_phase,
@@ -154,6 +188,15 @@ class TrainingConsole:
                 last_outcome=self._recovery_outcome(),
             )
             self._save_state(reconciled)
+            current = reconciled_inspection(inspection, publication_path)
+            status = inspect_status(self.settings, self.state, current)
+            payload = status_payload(status)
+            payload["validated"] = True
+            payload["configuration"] = configuration_summary(
+                self.settings, self.config, self.run_dir
+            )
+            self.events.emit("status", payload)
+            return status
         except Exception as error:
             self._fail(error)
             raise
@@ -210,6 +253,14 @@ class TrainingConsole:
             publication = self.artifacts.reconcile()
             if publication is None:
                 raise RuntimeError("data collection requires a published model")
+            current_publication = publication_identity(self.manager)
+            self.events.emit(
+                "collection_started",
+                {
+                    **current_publication,
+                    "round_number": self.state.next_collection_round,
+                },
+            )
 
             from zero_ttt.selfplay.service import SelfPlayService
 
@@ -224,30 +275,55 @@ class TrainingConsole:
                 service,
             ):
                 while not budget.expired and not signals.requested:
-                    round_number = self.state.next_collection_round
-                    summary = service.collect(
-                        games=self.config.selfplay.actor_count,
-                        seed=self._round_seed(self.config.seed, round_number),
-                    )
-                    if summary.collected_games + summary.skipped_games != summary.requested_games:
-                        raise RuntimeError("self-play round did not finish all requested games")
+                    summary = self._collect_round(service, current_publication)
                     rounds += 1
                     games += summary.collected_games
-                    self._save_state(
-                        dataclasses.replace(
-                            self.state,
-                            next_collection_round=round_number + 1,
-                            last_outcome=(
-                                f"round {round_number} sealed: "
-                                f"new={summary.collected_games}, "
-                                f"skipped={summary.skipped_games}"
-                            ),
-                        )
-                    )
-            self._finish(f"soft-stopped after {rounds} rounds and {games} new games")
+            outcome = f"soft-stopped after {rounds} rounds and {games} new games"
+            self.events.emit(
+                "collection_finished",
+                {
+                    **current_publication,
+                    "rounds": rounds,
+                    "new_games": games,
+                    "next_collection_round": self.state.next_collection_round,
+                },
+            )
+            self._finish(outcome)
         except Exception as error:
             self._fail(error)
             raise
+
+    def _collect_round(
+        self,
+        service: SelfPlayService,
+        current_publication: dict[str, object],
+    ) -> CollectionSummary:
+        round_number = self.state.next_collection_round
+        summary = service.collect(
+            games=self.config.selfplay.actor_count,
+            seed=self._round_seed(self.config.seed, round_number),
+        )
+        if summary.collected_games + summary.skipped_games != summary.requested_games:
+            raise RuntimeError("self-play round did not finish all requested games")
+        self.events.emit(
+            "collection_round",
+            {
+                **asdict(summary),
+                "run_id": current_publication["run_id"],
+                "round_number": round_number,
+            },
+        )
+        self._save_state(
+            dataclasses.replace(
+                self.state,
+                next_collection_round=round_number + 1,
+                last_outcome=(
+                    f"round {round_number} sealed: new={summary.collected_games}, "
+                    f"skipped={summary.skipped_games}"
+                ),
+            )
+        )
+        return summary
 
     def _validate_warm_start(self, warm_start: bool) -> None:
         if warm_start and self.state.phase is not TrainingPhase.COLD_START:
@@ -284,8 +360,8 @@ class TrainingConsole:
         previous = session.restore(checkpoint.path, allow_data_transition=True)
         return session, previous
 
-    @staticmethod
     def _train_until_stop(
+        self,
         session: TrainingSession,
         plan: TrainingDataPlan,
         budget: RuntimeBudget,
@@ -294,8 +370,14 @@ class TrainingConsole:
         last_published = None
         with SoftStopSignals() as signals:
             while not budget.expired and not signals.requested:
-                session.step(plan.source)
+                started = time.perf_counter()
+                metrics = session.step(plan.source)
+                elapsed = time.perf_counter() - started
                 steps += 1
+                self.events.emit(
+                    "training_step",
+                    training_step_payload(self.config, session, metrics, elapsed),
+                )
                 if session.publication_due:
                     last_published = session.publish()
         return steps, last_published
@@ -341,7 +423,21 @@ class TrainingConsole:
             use_mixture = warm_start or self.state.phase is TrainingPhase.MIXTURE
             plan = self.data_planner.build(use_mixture=use_mixture)
             session, previous_identity = self._training_session(plan, use_mixture)
+            learner_state = session.learner.state
+            self.events.emit(
+                "training_started",
+                {
+                    "run_id": learner_state.run_id,
+                    "optimizer_step": learner_state.optimizer_step,
+                    "samples_seen": learner_state.samples_seen,
+                    "phase": plan.target_phase.value,
+                    "data_identity": asdict(plan.identity),
+                    "config_json": self.config.canonical_json(),
+                    "config_sha256": self.config.sha256,
+                },
+            )
             steps, last_published = self._train_until_stop(session, plan, budget)
+            published: PublishedArtifacts | None = None
             if steps > 0:
                 published = self._current_publication(session, last_published)
                 self._record_training_transition(plan, previous_identity, warm_start)
@@ -352,6 +448,17 @@ class TrainingConsole:
                 )
             else:
                 outcome = "runtime budget expired before an optimizer step started"
+            self.events.emit(
+                "training_finished",
+                training_finished_payload(
+                    session,
+                    plan,
+                    steps,
+                    self.state.phase.value,
+                    outcome,
+                    published,
+                ),
+            )
             self._finish(outcome)
         except Exception as error:
             self._fail(error)

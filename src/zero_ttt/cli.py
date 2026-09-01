@@ -114,10 +114,21 @@ def _add_offline_command(subparsers) -> None:
     offline.add_argument("--run-id")
 
 
+def _add_console_command(subparsers) -> None:
+    console = subparsers.add_parser("console", help="Docker training console")
+    console.add_argument("--config", default="configs/console.toml", help="console TOML file")
+    actions = console.add_subparsers(dest="console_action")
+    status = actions.add_parser("status", help="inspect current console status")
+    status.add_argument("--json", action="store_true")
+    for name in ("reconcile", "train", "collect", "warm-start"):
+        child = actions.add_parser(name)
+        child.add_argument("--events", choices=("none", "jsonl"), default="none")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="zero-ttt")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("console", help="interactive Docker training console")
+    _add_console_command(subparsers)
     for command in ("config-check", "model-smoke", "train-smoke"):
         _add_config(subparsers.add_parser(command))
     _add_manifest_commands(subparsers)
@@ -311,12 +322,48 @@ def _selfplay_collect(arguments: argparse.Namespace) -> None:
     print(json.dumps(payload))
 
 
+def _console_sinks(arguments: argparse.Namespace, run_dir):
+    from zero_ttt.console.events import CompositeEventSink, ConsoleEventSink, JsonLineEventSink
+    from zero_ttt.observability import TensorBoardEventSink
+
+    sinks: list[ConsoleEventSink] = [TensorBoardEventSink(run_dir)]
+    if getattr(arguments, "events", "none") == "jsonl":
+        sinks.insert(0, JsonLineEventSink(lambda line: print(line, flush=True)))
+    return CompositeEventSink(sinks)
+
+
+def _console_command(arguments: argparse.Namespace) -> int:
+    from zero_ttt.console import TrainingConsole, load_console_config
+    from zero_ttt.console.status import status_payload
+
+    settings = load_console_config(arguments.config)
+    if arguments.console_action is None:
+        return TrainingConsole(settings).run_interactive()
+    console = TrainingConsole(settings)
+    if arguments.console_action == "status":
+        status = console.status()
+        print(json.dumps(status_payload(status)) if arguments.json else status)
+        return 0
+    events = _console_sinks(arguments, console.run_dir)
+    console.events = events
+    try:
+        with console.lock:
+            console.reconcile()
+            if arguments.console_action == "train":
+                console.train()
+            elif arguments.console_action == "collect":
+                console.collect()
+            elif arguments.console_action == "warm-start":
+                console.train(warm_start=True)
+    finally:
+        events.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     if arguments.command == "console":
-        from zero_ttt.console import TrainingConsole, load_console_config
-
-        return TrainingConsole(load_console_config()).run_interactive()
+        return _console_command(arguments)
     if arguments.command == "config-check":
         _config_check(arguments.config)
     elif arguments.command == "model-smoke":

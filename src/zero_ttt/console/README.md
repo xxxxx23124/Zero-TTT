@@ -26,8 +26,8 @@ publication、Catalog、snapshot 和 shard 仍是事实源。
 ## 数据规划与阶段切换
 
 `TrainingDataPlanner` 在 cold-start 阶段构造单 snapshot `CatalogBatchSource`；mixture 阶段从全部
-已 sealed 自博弈数据创建新 snapshot，并写 80% self-play / 20% cold rehearsal 的不可变
-mixture manifest。
+已 sealed 自博弈数据创建新 snapshot，并按 `configs/console.toml` 的 `mixture` 权重写不可变
+mixture manifest；当前模板是 80% self-play / 20% cold rehearsal。
 
 数据身份未变时严格 resume；新自博弈棋局导致 snapshot 变化时，只能通过
 `restore_for_data_transition` 保留模型、优化器、RNG、step 和 samples，并写 `MigrationRecord`。
@@ -45,3 +45,9 @@ warm-start 必须同时存在完整 cold-start checkpoint 和至少一盘 sealed
 
 控制台只调用 [`training`](../training/README.md)、[`selfplay`](../selfplay/README.md) 和
 [`data`](../data/README.md) 的应用服务，底层包不得反向导入 `console`。
+
+## Web 控制边界
+
+`zero_ttt.control` 只通过独立子进程调用非交互 console 命令，并转发 SIGTERM 请求软停止；
+`zero_ttt.dashboard` 只消费 control API。两者都不得进入 Learner、搜索或数据实现。TensorBoard
+适配器消费结构化事件，UI 轮询代理缓存，不轮询加载完整 checkpoint。

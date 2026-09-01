@@ -88,6 +88,16 @@ zero-ttt offline-imitation --config configs/rtx4090l.toml \
 
 `mixture-create` 的 snapshot ID 必须是 catalog 输出的 64 位小写十六进制 SHA-256。
 
+配置好 cold snapshot 后，可启动本机 Web 控制栈：
+
+```bash
+docker compose up --build training-ui
+```
+
+该入口通过 Compose 依赖同时启动训练代理和 TensorBoard；仅训练代理拥有 GPU。UI 不挂载
+Docker Socket，也不负责创建或停止其他容器。停止 Compose 时代理先向活动训练子进程转发
+SIGTERM，并使用 30 分钟 grace period 等待软停止和 checkpoint。
+
 `selfplay-collect` 的 JSON 摘要包含真实与补齐 evaluation 数、满批比例、推理延迟、
 simulations/s、棋规 CPU 总耗时及 GPU 峰值；RTX 4090 正式冒烟应留存该输出。
 

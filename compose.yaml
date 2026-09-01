@@ -39,6 +39,100 @@ services:
       - uv-cache:/cache/uv
     command: ["zero-ttt", "console"]
 
+  training-agent:
+    extends:
+      service: dev
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+      - zero-ttt-data-work:/datasets/work
+      - huggingface-cache:/cache/huggingface
+      - pip-cache:/cache/pip
+      - torch-cache:/cache/torch
+      - torch-extensions-cache:/cache/torch_extensions
+      - uv-cache:/cache/uv
+    environment:
+      PIP_CACHE_DIR: /cache/pip
+      PYTHONPATH: /workspace/src
+      ZERO_TTT_CONSOLE_CONFIG: /workspace/configs/console.toml
+      ZERO_TTT_AGENT_HOST: 0.0.0.0
+      ZERO_TTT_AGENT_PORT: "8090"
+    command: ["zero-ttt-agent"]
+    expose:
+      - "8090"
+    stop_grace_period: 30m
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8090/api/v1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  tensorboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zero-ttt:torch2.13.0-cuda13.2-cudnn9-devel
+    working_dir: /workspace
+    init: true
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+    command:
+      - tensorboard
+      - --logdir
+      - /workspace/runs
+      - --host
+      - 0.0.0.0
+      - --port
+      - "6006"
+      - --reload_interval
+      - "5"
+    ports:
+      - "127.0.0.1:6006:6006"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:6006/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  training-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zero-ttt:torch2.13.0-cuda13.2-cudnn9-devel
+    working_dir: /workspace
+    init: true
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+    environment:
+      PYTHONPATH: /workspace/src
+      ZERO_TTT_AGENT_URL: http://training-agent:8090
+      ZERO_TTT_TENSORBOARD_URL: http://127.0.0.1:6006
+      ZERO_TTT_UI_HOST: 0.0.0.0
+      ZERO_TTT_UI_PORT: "8080"
+    command: ["zero-ttt-ui"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      training-agent:
+        condition: service_healthy
+      tensorboard:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
   katago-version:
     profiles: ["katago"]
     build:

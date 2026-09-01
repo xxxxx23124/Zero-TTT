@@ -17,7 +17,7 @@ Transformer、Learner、EMA、checkpoint 和本地 Tromp–Taylor 棋规；目�
 - `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v7 checkpoint 和不可变 publication。
 - 从不可变 publication 加载的固定 batch-16 evaluator、OpenSpiel PUCT 适配和可恢复 MCTS 自博弈采集。
 - trajectory/shard/catalog v4、来源过滤 snapshot 与加权 `MixtureBatchSource`。
-- Docker 交互式训练控制台、8 小时软停止、状态恢复和冷启动到 mixture 的 warm-start。
+- Docker 交互式与 NiceGUI 训练控制台、TensorBoard 指标、软停止、状态恢复和 cold→mixture warm-start。
 - 合成数据与 64 盘真实 g170 棋谱驱动的 Docker 垂直冒烟测试。
 - 固定到 v1.17.2 的 KataGo CUDA 镜像、Analysis Engine 与 GTP 服务入口。
 - 固定到 v2.0.1 指定提交的 OpenSpiel 源码，并在开发镜像中从锁定依赖构建 `pyspiel`。
@@ -43,6 +43,13 @@ docker compose run --rm dev zero-ttt train-smoke --config configs/test.toml
 
 ```bash
 docker compose run --rm training-console
+```
+
+本机可视化控制台使用一条 Compose 命令启动；浏览器访问 `http://127.0.0.1:8080`，TensorBoard
+位于 `http://127.0.0.1:6006`：
+
+```bash
+docker compose up --build training-ui
 ```
 
 真实数据冒烟通过 `compose.data.yaml` 将外部目录只读挂载；命令见

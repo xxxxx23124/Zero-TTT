@@ -94,3 +94,11 @@
   回传链路也需要尽量稳定的梯度分辨率。当前优先方便、可诊断性和稳健性，并接受速度损失。
 - **影响：** 配置和模型产物升级到 v7 并声明 `tensor_precision = "float32"`；旧 v6 运行不兼容。
   训练与推理按阶段分别遵守 14.5 GiB 显存线，速度下降不触发精度回退。
+
+## D-041：容器内 Web 控制与指标
+
+- **状态：** 已接受
+- **决定：** NiceGUI、训练代理和 TensorBoard 分为 Compose 服务；代理以单一子进程串行调用
+  console 操作，UI 不挂 Docker Socket、不编辑实验参数。
+- **影响：** 页面只绑定本机，暂停沿用 optimizer step/完整棋局轮次的软停止。无人值守阶段循环
+  和教师标注仍不在范围内，checkpoint、publication、Catalog 与 snapshot 继续作为事实源。

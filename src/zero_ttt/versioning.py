@@ -65,7 +65,7 @@ SELFPLAY_TASK_SCHEMA = SchemaSpec(
 )
 CONSOLE_CONFIG_SCHEMA = SchemaSpec(
     "training console config",
-    1,
+    2,
     "rewrite configs/console.toml from the current template",
 )
 CONSOLE_STATE_SCHEMA = SchemaSpec(

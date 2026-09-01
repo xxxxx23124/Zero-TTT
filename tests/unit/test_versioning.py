@@ -40,7 +40,7 @@ def test_schema_registry_has_the_clean_break_versions() -> None:
         2,
         2,
         2,
-        1,
+        2,
         1,
     ]
     assert len({schema.name for schema in ALL_SCHEMAS}) == len(ALL_SCHEMAS)
