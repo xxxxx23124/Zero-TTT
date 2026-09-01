@@ -48,8 +48,9 @@ fallback 或依据 GPU 型号改变计算语义。
 拥有独立 run 身份和冻结 profile，旧数据 catalog 和当前不可变 snapshot 仍可复用。
 
 训练和自博弈按阶段创建 Learner 或 evaluator，不要求两个 GPU 模型同时常驻。RTX 4090 Laptop
-的 batch-16 实测中，默认模型 eager/compiled 训练峰值分别为 13.127/13.307 GiB reserved，
-FP32 推理分别为 3.979/4.295 GiB；baseline eager 训练/推理分别为 11.766/3.053 GiB。
-速度只记录，不作为回退精度的理由。
+的当前 43.37M 默认模型在 batch 64、累计 64、compiled、无 activation checkpoint 下，完整
+optimizer step 峰值为 13.174 GiB reserved；同模型 batch-64 compiled 推理为 1.344 GiB。
+保留供未来设备使用的 625M 模型在 batch-64 compiled 推理下为 9.430 GiB。速度只记录，不作为
+回退精度的理由；旧开发日志中的 625M batch-16 数字仍是当时实验事实。
 
 旧开发日志和 legacy 决策中的 BF16 数字是当时实验事实，不代表当前受支持行为。

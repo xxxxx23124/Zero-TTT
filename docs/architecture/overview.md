@@ -29,7 +29,7 @@ flowchart LR
   `CatalogBatchSource` 垂直切片。
 - `BatchSource`、带逐样本标签 mask 的 `TrainBatch`、`PositionEvaluator` 三个稳定边界。
 - KataGo v1.17.2 的独立 Docker 入口，以及固定版本的 OpenSpiel 源码子模块。
-- OpenSpiel 本地状态适配、PUCT、自博弈采集、固定 batch-16 publication evaluator 和推理 broker。
+- OpenSpiel 本地状态适配、PUCT、自博弈采集、固定 batch-64 publication evaluator 和推理 broker。
 - v4 自博弈审计记录、来源过滤 snapshot 与 snapshot mixture 训练。
 
 ## 当前未实现

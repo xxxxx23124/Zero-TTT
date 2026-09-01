@@ -24,8 +24,10 @@ from zero_ttt.training.losses import TrainingTargets, compute_losses
 MEMORY_LIMIT_BYTES = int(14.5 * 1024**3)
 PARAMETER_LIMIT = 630_000_000
 EXPECTED_PARAMETERS = {
-    "configs/profiles/rtx4090l.toml": 625_357_745,
-    "configs/profiles/rtx4090l_baseline.toml": 620_432_901,
+    "configs/profiles/rtx4090l.toml": 43_371_150,
+    "configs/profiles/rtx4090l_baseline.toml": 41_189_893,
+    "configs/profiles/rtx4090l_625m_future.toml": 625_357_745,
+    "configs/profiles/rtx4090l_625m_future_baseline.toml": 620_432_901,
 }
 
 

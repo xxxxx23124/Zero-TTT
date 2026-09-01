@@ -11,11 +11,12 @@ Transformer、Learner、EMA、checkpoint 和本地 Tromp–Taylor 棋规；目�
 
 ## 当前可用
 
-- 625M 与全关闭基线的策略—价值 Transformer 配置。
+- 面向 RTX 4090 Laptop 的 43.37M 高效 Transformer、全关闭基线，以及保留供未来设备使用的
+  625M profile。
 - Tromp–Taylor 棋规、特征编码、模型损失和通用 `BatchSource` 训练接口。
 - g170 SGF Importer、版本化 trajectory/annotation NPZ、SQLite catalog 与快照采样。
 - `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v8 checkpoint 和不可变 publication。
-- 从不可变 publication 加载的固定 batch-16 evaluator、OpenSpiel PUCT 适配和可恢复 MCTS 自博弈采集。
+- 从不可变 publication 加载的固定 batch-64 evaluator、OpenSpiel PUCT 适配和可恢复 MCTS 自博弈采集。
 - trajectory/shard/catalog v4、来源过滤 snapshot 与加权 `MixtureBatchSource`。
 - NiceGUI 数据准备与训练中心、TensorBoard 指标、软停止、状态恢复和 cold→mixture warm-start。
 - 合成数据与 64 盘真实 g170 棋谱驱动的 Docker 垂直冒烟测试。

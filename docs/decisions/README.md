@@ -110,3 +110,14 @@
   cold snapshot。数据准备和训练共享单一作业锁。
 - **影响：** 业务数据使用 Windows bind mount，Docker 命名卷只保存可删除缓存；移除
   `console.toml` 和交互菜单，旧状态不迁移、不删除。
+
+## D-043：本地高效模型与 batch-64 自博弈
+
+- **状态：** 已接受
+- **决定：** RTX 4090 Laptop 当前默认改为 12 层、`d_model=512`、8 头、`d_ff=1536`，后六层
+  启用共享 rank-8 HyperNet，并保留稀疏 DWA；训练使用 batch 64、累计 64、compile 和 CPU EMA，
+  不使用 activation checkpoint。自博弈使用 64 个 actor 与固定 batch-64 evaluator。
+- **理由：** 严格 FP32 下，batch 64 的反向激活是主要显存压力；43.37M 配置在完整累计中保留
+  约 1.3 GiB 的 14.5 GiB 验收余量，同时避免 checkpoint 重计算。
+- **影响：** 原 625M 默认和 baseline 改名为 future profile；旧任务继续读取冻结配置，新任务不与
+  旧 checkpoint 混用。精度策略、有效 batch 4096、搜索预算和持久格式不变。

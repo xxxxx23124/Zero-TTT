@@ -26,13 +26,13 @@
 ## 下一阶段二：扩大监督冷启动
 
 - 执行全量 manifest/import，冻结正式 train/validation snapshot 并记录吞吐。
-- 在 RTX 4090 上验证累积 256、有效 batch 4096 的长时稳定性与恢复。
+- 在 RTX 4090 上验证物理 batch 64、累积 64、有效 batch 4096 的长时稳定性与恢复。
 - 在严格 FP32 下执行长时训练与自博弈基准，分别记录两个阶段的显存和吞吐。
 
 ## 已完成：首版 OpenSpiel AlphaZero 垂直切片
 
 - 已实现本地 `GameState` 的薄 `pyspiel.Game/State`、自定义 Evaluator 和 64 simulations PUCT。
-- 已实现 16 棋局并发、固定 batch-16 GPU 后端、可恢复 task、v4 shard 和 mixture→Learner 闭环。
+- 已实现 64 棋局并发、固定 batch-64 GPU 后端、可恢复 task、v4 shard 和 mixture→Learner 闭环。
 - 下一步在 RTX 4090 上记录正式 publication 的显存、batch fill、规则耗时和 simulations/s，再决定是否提高预算。
 
 ## 下一阶段四：主动教师辅导

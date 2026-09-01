@@ -10,10 +10,10 @@ history_length = 8
 [model]
 input_planes = 25
 global_features = 5
-d_model = 512
-n_heads = 8
-n_layers = 12
-d_ff = 1536
+d_model = 1280
+n_heads = 20
+n_layers = 32
+d_ff = 3328
 
 [model.rope]
 base = 100.0
@@ -23,20 +23,20 @@ centered = true
 learnable = false
 
 [model.hypernet]
-enabled = true
-num_layers = 6
+enabled = false
+num_layers = 16
 rank = 8
 hidden_dim = 128
 context_gradient_scale = 0.1
 
 [model.depth_mixing]
-enabled = true
+enabled = false
 dilation = 4
 period = 4
 
 [training]
-batch_size = 64
-accumulation_steps = 64
+batch_size = 16
+accumulation_steps = 256
 learning_rate = 0.0001
 beta1 = 0.9
 beta2 = 0.98
@@ -62,7 +62,7 @@ selfplay_weight = 0.8
 cold_start_weight = 0.2
 
 [execution]
-activation_checkpoint = false
+activation_checkpoint = true
 activation_checkpoint_stride = 1
 compile_model = true
 compile_mode = "default"

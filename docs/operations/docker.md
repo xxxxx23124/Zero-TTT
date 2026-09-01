@@ -64,8 +64,9 @@ docker compose -f compose.yaml -f compose.data.yaml run --rm dev `
 
 底层 `manifest-create`、`data-import`、`data-verify`、`snapshot-create`、`selfplay-collect` 和
 `offline-imitation` 仍保留给测试、自动化和高级排障。普通用户不需要执行这些命令。正式训练方案
-路径应使用 `configs/profiles/rtx4090l.toml`；`offline-imitation` 还必须显式提供 `--run-dir`，
-避免把运行目录重新塞回实验超参数配置。
+路径应使用 `configs/profiles/rtx4090l.toml`；同目录的 `rtx4090l_baseline.toml` 用于关闭
+HyperNet/DWA 的对照，`rtx4090l_625m_future*.toml` 只供未来设备实验。`offline-imitation`
+还必须显式提供 `--run-dir`，避免把运行目录重新塞回实验超参数配置。
 
 当前写入格式为 record/shard/catalog v4、来源与 mixture manifest v2、实验配置和模型产物 v8、
 Web run spec v1、控制状态 v2。读取器只接受精确当前版本，不提供旧格式迁移。

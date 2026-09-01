@@ -16,6 +16,7 @@ YYYY-MM-DD-short-topic.md
 
 | 日期 | 主题 | 结果摘要 | 相关决策 |
 | --- | --- | --- | --- |
+| 2026-09-01 | [本地高效模型与 batch-64 自博弈](2026-09-01-efficient-4090l-batch64.md) | 43.37M 默认模型完整累计峰值 13.174 GiB；训练与推理统一 batch 64 | D-043 |
 | 2026-09-01 | [全链路严格 FP32](2026-09-01-strict-fp32.md) | 训练、EMA、v7 产物与推理统一 FP32；默认模型分阶段显存通过 14.5 GiB 线 | D-040 |
 | 2026-08-22 | [OpenSpiel、AlphaZero 与序列数据路线](2026-08-22-openspiel-trajectory-lifecycle.md) | 固定 OpenSpiel v2.0.1；默认改为 MCTS AlphaZero；接受整盘序列、NPZ 分片和可选评级 | D-036 至 D-038 |
 | 2026-08-22 | [Learner、自博弈与分级教师文档重构](2026-08-22-learner-selfplay-curriculum.md) | 接受 Learner/采集分离、本地纯策略自博弈、可选 MCTS 与 Human-SL 课程边界；只改文档 | D-032 至 D-035 |

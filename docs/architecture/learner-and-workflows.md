@@ -42,9 +42,10 @@ SQLite 只承担索引、任务、租约和校验控制，不保存大型训练 
 按阶段分别创建 Learner 或 evaluator，不并发提交 CUDA 工作，也不以双 GPU 模型同时常驻作为
 支持目标。
 
-严格 FP32 的正式 batch-16 冒烟按阶段验收：默认模型 eager/compiled 训练峰值分别为
-`13.127/13.307 GiB reserved`，推理为 `3.979/4.295 GiB`；baseline eager 训练/推理为
-`11.766/3.053 GiB`。生产配置仍累积 256，单阶段继续遵守 14.5 GiB 验收线。
+严格 FP32 的当前默认模型按阶段验收：batch 64、累计 64、compiled、无 activation checkpoint
+训练的完整 optimizer step 峰值为 `13.174 GiB reserved`，batch-64 compiled 推理为
+`1.344 GiB`。生产配置的有效 batch 仍为 4096，CPU EMA 每个 optimizer step 自然触发；训练和
+自博弈阶段继续分别遵守 14.5 GiB 验收线。
 
 ## 流程组合
 
