@@ -7,7 +7,6 @@ import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import asdict
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from zero_ttt.config import ExperimentConfig, load_config
@@ -55,17 +54,11 @@ class TrainingConsole:
         *,
         clock: Callable[[], float] = time.monotonic,
         output: Callable[[str], None] = print,
-        input_fn: Callable[[str], str] = input,
         events: ConsoleEventSink | None = None,
     ) -> None:
         self.settings = settings
         self.config: ExperimentConfig = load_config(settings.experiment_config)
-        configured_run_dir = self.config.run_dir
-        self.run_dir = (
-            configured_run_dir.resolve()
-            if configured_run_dir.is_absolute()
-            else (Path.cwd() / configured_run_dir).resolve()
-        )
+        self.run_dir = settings.run_dir.resolve()
         self.manager = CheckpointManager(
             self.run_dir,
             keep=self.config.training.checkpoint_keep,
@@ -88,7 +81,6 @@ class TrainingConsole:
         self.state = self.state_store.load()
         self.clock = clock
         self.output = output
-        self.input = input_fn
         self.events = events or NullEventSink()
 
     def _save_state(self, state: ConsoleState) -> None:
@@ -148,6 +140,8 @@ class TrainingConsole:
         if checkpoint is None:
             return TrainingPhase.COLD_START
         self.artifacts.validate_checkpoint(checkpoint)
+        if checkpoint.summary.identity.run_id != self.settings.run_id:
+            raise ValueError("checkpoint belongs to a different web training run")
         identity = checkpoint.summary.data_identity
         if identity is None:
             raise ValueError("console checkpoint must have a training data identity")
@@ -179,6 +173,16 @@ class TrainingConsole:
         try:
             self._validate_reconcile_inputs()
             inspection = self.artifacts.inspect()
+            identities = [
+                summary.identity
+                for summary in (
+                    None if inspection.checkpoint is None else inspection.checkpoint.summary,
+                    inspection.publication,
+                )
+                if summary is not None
+            ]
+            if any(identity.run_id != self.settings.run_id for identity in identities):
+                raise ValueError("model artifact belongs to a different web training run")
             inferred_phase = self._checkpoint_phase(inspection.checkpoint)
             publication_path = self.artifacts.reconcile(inspection)
             reconciled = dataclasses.replace(
@@ -344,6 +348,7 @@ class TrainingConsole:
             self.config,
             self.manager,
             data_identity=plan.identity,
+            run_id=self.settings.run_id,
             artifacts=self.artifacts,
         )
         checkpoint = self.artifacts.inspect().checkpoint
@@ -466,31 +471,3 @@ class TrainingConsole:
         finally:
             if plan is not None:
                 plan.close()
-
-    def run_interactive(self) -> int:
-        with self.lock:
-            self.reconcile()
-            while True:
-                self.print_status()
-                self.output("\n1) 刷新状态  2) 收集数据  3) 开始训练  4) warm-start  5) 退出")
-                try:
-                    choice = self.input("请选择: ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    self.output("\n控制台已退出。")
-                    return 0
-                try:
-                    if choice == "1":
-                        self.reconcile()
-                    elif choice == "2":
-                        self.collect()
-                    elif choice == "3":
-                        self.train()
-                    elif choice == "4":
-                        self.train(warm_start=True)
-                    elif choice == "5":
-                        return 0
-                    else:
-                        self.output("无效选择。")
-                except Exception as error:
-                    self.output(f"控制台操作失败: {type(error).__name__}: {error}")
-                    return 1

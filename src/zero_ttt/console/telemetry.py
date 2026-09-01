@@ -29,12 +29,12 @@ def configuration_summary(
     return {
         "experiment_config": str(settings.experiment_config),
         "config_sha256": config.sha256,
-        "run_name": config.run_name,
+        "run_name": settings.name,
         "run_dir": str(run_dir),
         "max_runtime_hours": settings.max_runtime_hours,
         "cold_start_snapshot_id": settings.cold_start_snapshot_id,
-        "mixture_selfplay_weight": settings.mixture.selfplay,
-        "mixture_cold_start_weight": settings.mixture.cold_start,
+        "mixture_selfplay_weight": config.training.mixture.selfplay_weight,
+        "mixture_cold_start_weight": config.training.mixture.cold_start_weight,
         "model": {
             "d_model": config.model.d_model,
             "n_layers": config.model.n_layers,

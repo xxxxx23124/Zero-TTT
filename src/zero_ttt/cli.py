@@ -6,6 +6,7 @@ import argparse
 import json
 import tempfile
 from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -112,12 +113,20 @@ def _add_offline_command(subparsers) -> None:
     offline.add_argument("--teacher-fingerprint")
     offline.add_argument("--resume", nargs="?", const="latest")
     offline.add_argument("--run-id")
+    offline.add_argument("--run-dir", required=True)
 
 
 def _add_console_command(subparsers) -> None:
-    console = subparsers.add_parser("console", help="Docker training console")
-    console.add_argument("--config", default="configs/console.toml", help="console TOML file")
-    actions = console.add_subparsers(dest="console_action")
+    console = subparsers.add_parser("console", help="non-interactive training orchestrator")
+    console.add_argument("--run-id", required=True)
+    console.add_argument("--name", required=True)
+    console.add_argument("--config", required=True, help="frozen experiment TOML")
+    console.add_argument("--run-dir", required=True)
+    console.add_argument("--catalog", required=True)
+    console.add_argument("--store-root", required=True)
+    console.add_argument("--cold-snapshot", required=True)
+    console.add_argument("--max-runtime-hours", required=True, type=float)
+    actions = console.add_subparsers(dest="console_action", required=True)
     status = actions.add_parser("status", help="inspect current console status")
     status.add_argument("--json", action="store_true")
     for name in ("reconcile", "train", "collect", "warm-start"):
@@ -162,7 +171,6 @@ def _config_check(config_path: str) -> None:
         json.dumps(
             {
                 "schema_version": config.schema_version,
-                "run_name": config.run_name,
                 "config_sha256": config.sha256,
                 "effective_batch_size": config.training.effective_batch_size,
             }
@@ -231,7 +239,7 @@ def _offline_imitation(arguments: argparse.Namespace) -> None:
         raise ValueError("steps cannot be negative")
     config = load_config(arguments.config)
     rng = np.random.default_rng(config.seed)
-    run_dir = config.run_dir
+    run_dir = arguments.run_dir
     manager = CheckpointManager(run_dir, keep=config.training.checkpoint_keep)
     source_context, identity = _offline_source(arguments)
     with source_context as source:
@@ -333,12 +341,19 @@ def _console_sinks(arguments: argparse.Namespace, run_dir):
 
 
 def _console_command(arguments: argparse.Namespace) -> int:
-    from zero_ttt.console import TrainingConsole, load_console_config
+    from zero_ttt.console import RunContext, TrainingConsole
     from zero_ttt.console.status import status_payload
 
-    settings = load_console_config(arguments.config)
-    if arguments.console_action is None:
-        return TrainingConsole(settings).run_interactive()
+    settings = RunContext(
+        run_id=arguments.run_id,
+        name=arguments.name,
+        experiment_config=Path(arguments.config),
+        run_dir=Path(arguments.run_dir),
+        catalog_path=Path(arguments.catalog),
+        store_root=Path(arguments.store_root),
+        cold_start_snapshot_id=arguments.cold_snapshot,
+        max_runtime_hours=arguments.max_runtime_hours,
+    )
     console = TrainingConsole(settings)
     if arguments.console_action == "status":
         status = console.status()

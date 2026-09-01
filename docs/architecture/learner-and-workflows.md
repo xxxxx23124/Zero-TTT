@@ -1,6 +1,6 @@
 # Learner 与流程边界
 
-状态：Learner、离线数据、OpenSpiel 自博弈闭环和交互式控制台已实现；教师队列、无人值守自动循环和课程调度仍未实现。
+状态：Learner、离线数据、OpenSpiel 自博弈闭环和本地 Web 控制已实现；教师队列、无人值守自动循环和课程调度仍未实现。
 
 ## 组件职责
 
@@ -52,7 +52,7 @@ SQLite 只承担索引、任务、租约和校验控制，不保存大型训练 
 冻结；采集封存后才训练并发布下一版。多棋局并发、统一 GPU 推理聚批是扩大采集前的性能
 要求，但不会改变上述职责边界。
 
-Docker 控制台位于独立 `zero_ttt.console` 包中；底层模块不导入它。普通 checkpoint restore
+Web 代理调用的非交互编排位于独立 `zero_ttt.console` 包中；底层模块不导入它。普通 checkpoint restore
 严格绑定数据身份，只有显式滚动不可变 snapshot 时才允许保留完整训练状态的数据迁移。
-checkpoint、Catalog 和不可变产物始终是事实源；控制台状态只用于编排与审计。内部状态机和
+checkpoint、Catalog 和不可变产物始终是事实源；Web 控制状态只用于编排与审计。内部状态机和
 恢复规则见[控制台包说明](../../src/zero_ttt/console/README.md)。

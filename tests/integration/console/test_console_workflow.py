@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from zero_ttt.config import load_config
-from zero_ttt.console.config import ConsoleConfig, MixtureWeights
+from zero_ttt.console.config import RunContext
 from zero_ttt.console.engine import TrainingConsole
 from zero_ttt.console.state import Operation, TrainingPhase
 from zero_ttt.data.catalog import Catalog
@@ -60,8 +60,6 @@ def _record(asset_sha256: str, game_id: str) -> TrajectoryRecord:
 def _experiment_config(tmp_path: Path, *, fast_selfplay: bool = False) -> Path:
     destination = tmp_path / "experiment.toml"
     payload = Path("configs/test.toml").read_text(encoding="utf-8")
-    run_dir = (tmp_path / "run").as_posix()
-    payload = payload.replace('run_dir = "runs/test"', f'run_dir = "{run_dir}"')
     if fast_selfplay:
         payload = payload.replace("max_moves = 12", "max_moves = 2")
         payload = payload.replace("max_simulations = 64", "max_simulations = 2")
@@ -145,14 +143,15 @@ def _add_selfplay(
 
 def _console(tmp_path: Path) -> TrainingConsole:
     catalog_path, store_root, cold_snapshot = _cold_data(tmp_path)
-    settings = ConsoleConfig(
-        schema_version=1,
+    settings = RunContext(
+        run_id="1" * 32,
+        name="test run",
         experiment_config=_experiment_config(tmp_path),
+        run_dir=tmp_path / "run",
         catalog_path=catalog_path,
         store_root=store_root,
         cold_start_snapshot_id=cold_snapshot,
         max_runtime_hours=1.0,
-        mixture=MixtureWeights(0.8, 0.2),
     )
     return TrainingConsole(settings, clock=OneStepClock(), output=lambda _line: None)
 
@@ -167,14 +166,15 @@ def _cold_identity(console: TrainingConsole):
 
 def test_cold_train_warm_start_and_restart_status(tmp_path: Path) -> None:
     catalog_path, store_root, cold_snapshot = _cold_data(tmp_path)
-    settings = ConsoleConfig(
-        schema_version=1,
+    settings = RunContext(
+        run_id="1" * 32,
+        name="test run",
         experiment_config=_experiment_config(tmp_path),
+        run_dir=tmp_path / "run",
         catalog_path=catalog_path,
         store_root=store_root,
         cold_start_snapshot_id=cold_snapshot,
         max_runtime_hours=1.0,
-        mixture=MixtureWeights(0.8, 0.2),
     )
     console = TrainingConsole(settings, clock=OneStepClock(), output=lambda _line: None)
     console.reconcile()
@@ -203,14 +203,15 @@ def test_cold_train_warm_start_and_restart_status(tmp_path: Path) -> None:
 
 def test_collection_soft_stops_after_one_complete_actor_round(tmp_path: Path) -> None:
     catalog_path, store_root, cold_snapshot = _cold_data(tmp_path)
-    settings = ConsoleConfig(
-        schema_version=1,
+    settings = RunContext(
+        run_id="1" * 32,
+        name="test run",
         experiment_config=_experiment_config(tmp_path, fast_selfplay=True),
+        run_dir=tmp_path / "run",
         catalog_path=catalog_path,
         store_root=store_root,
         cold_start_snapshot_id=cold_snapshot,
         max_runtime_hours=1.0,
-        mixture=MixtureWeights(0.8, 0.2),
     )
     console = TrainingConsole(settings, clock=OneStepClock(), output=lambda _line: None)
     console.reconcile()
@@ -266,7 +267,7 @@ def test_selfplay_training_visibility_requires_sealed_tasks(tmp_path: Path) -> N
         assert catalog.selfplay_outside_snapshot(snapshot) == (0, 0)
 
 
-def test_reconcile_replaces_same_step_publication_from_another_run(
+def test_reconcile_rejects_publication_from_another_web_run(
     tmp_path: Path,
 ) -> None:
     console = _console(tmp_path)
@@ -275,24 +276,20 @@ def test_reconcile_replaces_same_step_publication_from_another_run(
         console.config,
         console.manager,
         data_identity=identity,
-        run_id="run-a",
+        run_id="f" * 32,
     )
     first.publish()
     second = Learner(
         console.config,
         console.manager,
         data_identity=identity,
-        run_id="run-b",
+        run_id=console.settings.run_id,
     )
     second.save_checkpoint()
 
-    console.reconcile()
-
-    publication = console.manager.current_publication()
-    assert publication is not None
-    payload = console.manager.load_publication(publication)
-    assert payload["run_id"] == "run-b"
-    assert console.status().artifact_consistency == ("checkpoint and publication aligned")
+    with pytest.raises(ValueError, match="different web training run"):
+        console.reconcile()
+    assert console.state.operation is Operation.FAILED
 
 
 def test_publication_only_reconcile_accepts_matching_config(tmp_path: Path) -> None:
@@ -302,7 +299,7 @@ def test_publication_only_reconcile_accepts_matching_config(tmp_path: Path) -> N
         console.config,
         console.manager,
         data_identity=identity,
-        run_id="publication-only",
+        run_id=console.settings.run_id,
     )
     publication = learner.publish()
 
@@ -334,11 +331,11 @@ def test_reconcile_rejects_same_run_publication_conflicts(
         console.config,
         console.manager,
         data_identity=identity,
-        run_id="shared-run",
+        run_id=console.settings.run_id,
     )
     learner.save_checkpoint()
     console.manager.save_publication(
-        "shared-run",
+        console.settings.run_id,
         publication_step,
         publication_samples,
         learner.slow.state_dict(),
@@ -360,11 +357,11 @@ def test_publication_only_reconcile_requires_matching_config(tmp_path: Path) -> 
         console.config,
         console.manager,
         data_identity=identity,
-        run_id="publication-only",
+        run_id=console.settings.run_id,
     )
-    alternative = dataclasses.replace(console.config, run_name="other-experiment")
+    alternative = dataclasses.replace(console.config, seed=console.config.seed + 1)
     console.manager.save_publication(
-        "publication-only",
+        console.settings.run_id,
         0,
         0,
         learner.slow.state_dict(),
@@ -388,7 +385,7 @@ def test_reconcile_repairs_publication_catalog_and_checkpoint_state(
         console.config,
         console.manager,
         data_identity=identity,
-        run_id="repair-run",
+        run_id=console.settings.run_id,
     )
     rng = np.random.default_rng(31)
     learner.train_optimizer_step(SyntheticBatchSource(), rng)
@@ -403,11 +400,12 @@ def test_reconcile_repairs_publication_catalog_and_checkpoint_state(
     ) as catalog:
         row = catalog.connection.execute(
             "SELECT run_id,optimizer_step,samples_seen,relative_path "
-            "FROM publications WHERE run_id='repair-run'"
+            "FROM publications WHERE run_id=?",
+            (console.settings.run_id,),
         ).fetchone()
     assert row is not None
     assert dict(row) == {
-        "run_id": "repair-run",
+        "run_id": console.settings.run_id,
         "optimizer_step": 1,
         "samples_seen": 4,
         "relative_path": publication.relative_to(console.run_dir).as_posix(),

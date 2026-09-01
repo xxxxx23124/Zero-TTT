@@ -24,8 +24,8 @@ from zero_ttt.training.losses import TrainingTargets, compute_losses
 MEMORY_LIMIT_BYTES = int(14.5 * 1024**3)
 PARAMETER_LIMIT = 630_000_000
 EXPECTED_PARAMETERS = {
-    "configs/rtx4090l.toml": 625_357_745,
-    "configs/rtx4090l_baseline.toml": 620_432_901,
+    "configs/profiles/rtx4090l.toml": 625_357_745,
+    "configs/profiles/rtx4090l_baseline.toml": 620_432_901,
 }
 
 
@@ -421,7 +421,10 @@ def main() -> None:
     parser.add_argument(
         "--configs",
         nargs="+",
-        default=["configs/rtx4090l_baseline.toml", "configs/rtx4090l.toml"],
+        default=[
+            "configs/profiles/rtx4090l_baseline.toml",
+            "configs/profiles/rtx4090l.toml",
+        ],
     )
     parser.add_argument("--default-optimizer-steps", type=int, default=16)
     parser.add_argument("--baseline-optimizer-steps", type=int, default=1)

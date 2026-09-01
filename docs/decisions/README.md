@@ -79,7 +79,7 @@
 
 ## D-039：Docker 交互式训练控制台
 
-- **状态：** 已接受
+- **状态：** 已由 D-042 取代
 - **决定：** 用独立状态机编排采集、训练和 cold→mixture warm-start；每个手动模式采用 8 小时
   默认预算，并只在完整并发棋局组或 optimizer step 边界软停止。
 - **影响：** 控制台不接管 LR/MCTS；普通 resume 仍严格绑定数据身份，显式 snapshot 滚动才保留
@@ -102,3 +102,11 @@
   console 操作，UI 不挂 Docker Socket、不编辑实验参数。
 - **影响：** 页面只绑定本机，暂停沿用 optimizer step/完整棋局轮次的软停止。无人值守阶段循环
   和教师标注仍不在范围内，checkpoint、publication、Catalog 与 snapshot 继续作为事实源。
+
+## D-042：前端任务身份与 Windows 业务存储
+
+- **状态：** 已接受
+- **决定：** Web 成为普通用户主入口；实验 TOML 只保存稳定训练方案，每个任务冻结 profile 与
+  cold snapshot。数据准备和训练共享单一作业锁。
+- **影响：** 业务数据使用 Windows bind mount，Docker 命名卷只保存可删除缓存；移除
+  `console.toml` 和交互菜单，旧状态不迁移、不删除。

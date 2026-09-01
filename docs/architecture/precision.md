@@ -43,9 +43,9 @@ fallback 或依据 GPU 型号改变计算语义。
 
 ## 产物与运行
 
-实验配置和模型产物当前都是 schema v7。checkpoint 与 publication 写入
-`tensor_precision = "float32"`；v6 产物不迁移、不加载，也不会被程序删除。正式配置使用新的
-`rtx4090l-625m-fp32` run 身份，旧数据 catalog 和不可变 snapshot 仍可复用。
+实验配置和模型产物当前都是 schema v8。checkpoint 与 publication 写入
+`tensor_precision = "float32"`；旧产物不迁移、不加载，也不会被程序删除。Web 创建的每个任务
+拥有独立 run 身份和冻结 profile，旧数据 catalog 和当前不可变 snapshot 仍可复用。
 
 训练和自博弈按阶段创建 Learner 或 evaluator，不要求两个 GPU 模型同时常驻。RTX 4090 Laptop
 的 batch-16 实测中，默认模型 eager/compiled 训练峰值分别为 13.127/13.307 GiB reserved，

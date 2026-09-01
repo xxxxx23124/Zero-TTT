@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from zero_ttt._io import atomic_write_json, sha256_file
 from zero_ttt.versioning import SOURCE_MANIFEST_SCHEMA
+
+ManifestProgress = Callable[[str, int, int, str], None]
+StopRequested = Callable[[], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,12 +60,18 @@ class SourceManifest:
         license_url: str,
         source_root: str | Path,
         pattern: str,
+        *,
+        progress: ManifestProgress | None = None,
+        stop_requested: StopRequested | None = None,
     ) -> SourceManifest:
         root = Path(source_root).resolve()
         assets = []
-        for path in sorted(root.glob(pattern)):
-            if not path.is_file():
-                continue
+        files = tuple(path for path in sorted(root.glob(pattern)) if path.is_file())
+        for index, path in enumerate(files, start=1):
+            if stop_requested is not None and stop_requested():
+                raise InterruptedError("manifest scan was safely stopped between source files")
+            if progress is not None:
+                progress("hashing", index - 1, len(files), path.relative_to(root).as_posix())
             assets.append(
                 ManifestAsset(
                     relative_path=path.relative_to(root).as_posix(),
@@ -69,6 +79,8 @@ class SourceManifest:
                     size_bytes=path.stat().st_size,
                 )
             )
+            if progress is not None:
+                progress("hashing", index, len(files), path.relative_to(root).as_posix())
         return cls(
             schema_version=SOURCE_MANIFEST_SCHEMA.current,
             dataset_id=dataset_id,
@@ -88,9 +100,19 @@ class SourceManifest:
         assets = tuple(ManifestAsset(**item) for item in raw.pop("assets"))
         return cls(assets=assets, **raw)
 
-    def verify(self, source_root: str | Path) -> None:
+    def verify(
+        self,
+        source_root: str | Path,
+        *,
+        progress: ManifestProgress | None = None,
+        stop_requested: StopRequested | None = None,
+    ) -> None:
         root = Path(source_root).resolve()
-        for asset in self.assets:
+        for index, asset in enumerate(self.assets, start=1):
+            if stop_requested is not None and stop_requested():
+                raise InterruptedError("manifest verification was safely stopped between source files")
+            if progress is not None:
+                progress("verifying", index - 1, len(self.assets), asset.relative_path)
             path = (root / asset.relative_path).resolve()
             try:
                 path.relative_to(root)
@@ -102,3 +124,5 @@ class SourceManifest:
                 raise ValueError(f"asset size mismatch: {asset.relative_path}")
             if sha256_file(path) != asset.sha256:
                 raise ValueError(f"asset SHA-256 mismatch: {asset.relative_path}")
+            if progress is not None:
+                progress("verifying", index, len(self.assets), asset.relative_path)

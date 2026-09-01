@@ -14,10 +14,10 @@ Transformer、Learner、EMA、checkpoint 和本地 Tromp–Taylor 棋规；目�
 - 625M 与全关闭基线的策略—价值 Transformer 配置。
 - Tromp–Taylor 棋规、特征编码、模型损失和通用 `BatchSource` 训练接口。
 - g170 SGF Importer、版本化 trajectory/annotation NPZ、SQLite catalog 与快照采样。
-- `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v7 checkpoint 和不可变 publication。
+- `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v8 checkpoint 和不可变 publication。
 - 从不可变 publication 加载的固定 batch-16 evaluator、OpenSpiel PUCT 适配和可恢复 MCTS 自博弈采集。
 - trajectory/shard/catalog v4、来源过滤 snapshot 与加权 `MixtureBatchSource`。
-- Docker 交互式与 NiceGUI 训练控制台、TensorBoard 指标、软停止、状态恢复和 cold→mixture warm-start。
+- NiceGUI 数据准备与训练中心、TensorBoard 指标、软停止、状态恢复和 cold→mixture warm-start。
 - 合成数据与 64 盘真实 g170 棋谱驱动的 Docker 垂直冒烟测试。
 - 固定到 v1.17.2 的 KataGo CUDA 镜像、Analysis Engine 与 GTP 服务入口。
 - 固定到 v2.0.1 指定提交的 OpenSpiel 源码，并在开发镜像中从锁定依赖构建 `pyspiel`。
@@ -39,21 +39,16 @@ docker compose run --rm dev zero-ttt config-check --config configs/test.toml
 docker compose run --rm dev zero-ttt train-smoke --config configs/test.toml
 ```
 
-配置好 `configs/console.toml` 的 cold-start snapshot 后，交互式控制台使用：
-
-```bash
-docker compose run --rm training-console
-```
-
-本机可视化控制台使用一条 Compose 命令启动；浏览器访问 `http://127.0.0.1:8080`，TensorBoard
-位于 `http://127.0.0.1:6006`：
+本机 Web 训练中心使用一条 Compose 命令启动；浏览器访问 `http://127.0.0.1:8080`，TensorBoard
+位于 `http://127.0.0.1:6006`。页面可扫描和导入 Windows 数据目录、创建/选择 snapshot、创建冻结
+训练任务，并执行训练、自博弈、warm-start 和安全暂停：
 
 ```bash
 docker compose up --build training-ui
 ```
 
-真实数据冒烟通过 `compose.data.yaml` 将外部目录只读挂载；命令见
-[Docker 运维](docs/operations/docker.md)。
+默认业务数据位于 `D:\datasets\Zero-TTT`，训练任务位于仓库 `runs/`；二者都使用 bind mount，
+不保存在 Docker 命名卷。详细步骤见[本地 Web 训练中心](docs/operations/training-console.md)。
 
 项目不保证宿主机 Python、CUDA 或编译器环境可用。所有正式命令均以 Compose 服务为入口。
 

@@ -25,12 +25,12 @@ class SchemaSpec:
 
 EXPERIMENT_CONFIG_SCHEMA = SchemaSpec(
     "experiment config",
-    7,
+    8,
     "rewrite the config from a current template",
 )
 MODEL_ARTIFACT_SCHEMA = SchemaSpec(
     "model artifact",
-    7,
+    8,
     "start a new run and publish a current model artifact",
 )
 RECORD_SCHEMA = SchemaSpec(
@@ -63,14 +63,14 @@ SELFPLAY_TASK_SCHEMA = SchemaSpec(
     2,
     "recollect the self-play task",
 )
-CONSOLE_CONFIG_SCHEMA = SchemaSpec(
-    "training console config",
-    2,
-    "rewrite configs/console.toml from the current template",
+RUN_SPEC_SCHEMA = SchemaSpec(
+    "training run specification",
+    1,
+    "create a new training run from the web interface",
 )
 CONSOLE_STATE_SCHEMA = SchemaSpec(
     "training console state",
-    1,
+    2,
     "inspect the run artifacts and recreate only the console state file",
 )
 
@@ -83,6 +83,6 @@ ALL_SCHEMAS = (
     SOURCE_MANIFEST_SCHEMA,
     TRAINING_MIXTURE_SCHEMA,
     SELFPLAY_TASK_SCHEMA,
-    CONSOLE_CONFIG_SCHEMA,
+    RUN_SPEC_SCHEMA,
     CONSOLE_STATE_SCHEMA,
 )

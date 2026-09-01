@@ -152,3 +152,44 @@ def test_capped_import_counts_only_new_games_and_finishes_only_at_eof(
     with Catalog(catalog_path, ShardStore(store_root)) as catalog:
         snapshot_id = catalog.create_snapshot(seed=1, validation_fraction=0.0)
         assert len(catalog.snapshot_trajectories(snapshot_id)) == 3
+
+
+def test_import_soft_stop_flushes_an_atomic_partial_shard_and_resumes(
+    tmp_path: Path,
+    valid_sgf,
+    manifest_factory,
+) -> None:
+    archive_path = tmp_path / "source.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("games.sgfs", b"\n".join((valid_sgf,) * 3))
+    payload = archive_path.read_bytes()
+    asset = ManifestAsset("source.zip", hashlib.sha256(payload).hexdigest(), len(payload))
+    manifest_path = tmp_path / "manifest.json"
+    manifest_factory(asset).save(manifest_path)
+    calls = 0
+
+    def stop_requested() -> bool:
+        nonlocal calls
+        calls += 1
+        return calls >= 4
+
+    first = import_manifest(
+        manifest_path,
+        tmp_path,
+        tmp_path / "processed",
+        tmp_path / "catalog.sqlite",
+        target_shard_bytes=1024 * 1024,
+        stop_requested=stop_requested,
+    )
+    assert 0 < first.accepted < 3
+    with Catalog(tmp_path / "catalog.sqlite", ShardStore(tmp_path / "processed")) as catalog:
+        assert catalog.recover() == ()
+        assert catalog.asset_status(asset.sha256) == "partial"
+
+    resumed = import_manifest(
+        manifest_path,
+        tmp_path,
+        tmp_path / "processed",
+        tmp_path / "catalog.sqlite",
+    )
+    assert first.accepted + resumed.accepted == 3

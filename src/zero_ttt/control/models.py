@@ -24,17 +24,31 @@ ACTIVE_JOB_STATES = {JobState.STARTING, JobState.RUNNING, JobState.STOP_REQUESTE
 @dataclass(slots=True)
 class JobRecord:
     operation_id: str
+    kind: str
     operation: str
+    run_id: str
     state: JobState
     started_ns: int
+    stoppable: bool
     finished_ns: int = 0
     pid: int | None = None
     return_code: int | None = None
     error: str = ""
+    progress: dict[str, object] | None = None
 
     @classmethod
-    def create(cls, operation: str) -> JobRecord:
-        return cls(uuid.uuid4().hex, operation, JobState.STARTING, time.time_ns())
+    def create(
+        cls, kind: str, operation: str, run_id: str = "", *, stoppable: bool = True
+    ) -> JobRecord:
+        return cls(
+            uuid.uuid4().hex,
+            kind,
+            operation,
+            run_id,
+            JobState.STARTING,
+            time.time_ns(),
+            stoppable,
+        )
 
     def payload(self) -> dict[str, object]:
         payload = asdict(self)

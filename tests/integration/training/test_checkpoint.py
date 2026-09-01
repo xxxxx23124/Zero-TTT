@@ -16,7 +16,7 @@ def test_v6_checkpoint_and_publication_schemas_are_rejected(tmp_path) -> None:
     for loader in (CheckpointManager.load, CheckpointManager.load_publication):
         with pytest.raises(
             ValueError,
-            match=r"model artifact.*expected v7.*new run",
+            match=r"model artifact.*expected v8.*new run",
         ):
             loader(path)
 
@@ -66,5 +66,5 @@ def test_legacy_current_pt_is_not_a_publication_pointer(tmp_path) -> None:
 def test_unversioned_publication_pointer_is_rejected(tmp_path) -> None:
     manager = CheckpointManager(tmp_path, keep=1)
     (manager.publication_dir / "current.json").write_text("{}", encoding="utf-8")
-    with pytest.raises(ValueError, match=r"model artifact.*expected v7"):
+    with pytest.raises(ValueError, match=r"model artifact.*expected v8"):
         manager.current_publication()

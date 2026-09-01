@@ -50,6 +50,12 @@ def test_shard_catalog_snapshot_and_annotation_sampling(
         annotation_info = store.write_annotations([annotation])
         catalog.commit_annotation_shard(annotation_info, [annotation])
         snapshot_id = catalog.create_snapshot(seed=9, validation_fraction=0.0)
+        listed = catalog.list_snapshots()
+        assert listed[0].snapshot_id == snapshot_id
+        assert listed[0].seed == 9
+        assert listed[0].split == "train"
+        assert listed[0].games == 1
+        assert listed[0].positions == record.trainable_position_count
         assert catalog.create_snapshot(seed=9, validation_fraction=0.0) == snapshot_id
         late_annotation = dataclasses.replace(annotation, teacher_fingerprint="teacher-v2")
         late_info = store.write_annotations([late_annotation])

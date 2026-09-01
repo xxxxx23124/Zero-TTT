@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from zero_ttt.data.catalog_types import (
     AnnotationLocator,
     SnapshotStatistics,
+    SnapshotSummary,
     TrajectoryLocator,
 )
 
@@ -243,6 +244,36 @@ class SnapshotService:
             row["task_id"],
             int(row["games"]),
             int(row["positions"]),
+        )
+
+    def list(self) -> tuple[SnapshotSummary, ...]:
+        rows = self.connection.execute(
+            """
+            SELECT s.snapshot_id,s.seed,s.split,s.validation_fraction,
+                   s.source_kind,s.task_id,s.created_ns,
+                   COUNT(st.game_id) AS games,
+                   COALESCE(SUM(t.trainable_positions), 0) AS positions
+            FROM snapshots s
+            LEFT JOIN snapshot_trajectories st ON st.snapshot_id=s.snapshot_id
+            LEFT JOIN trajectories t ON t.game_id=st.game_id
+            GROUP BY s.snapshot_id,s.seed,s.split,s.validation_fraction,
+                     s.source_kind,s.task_id,s.created_ns
+            ORDER BY s.created_ns DESC,s.snapshot_id
+            """
+        ).fetchall()
+        return tuple(
+            SnapshotSummary(
+                snapshot_id=str(row["snapshot_id"]),
+                seed=int(row["seed"]),
+                split=str(row["split"]),
+                validation_fraction=float(row["validation_fraction"]),
+                source_kind=row["source_kind"],
+                task_id=row["task_id"],
+                created_ns=int(row["created_ns"]),
+                games=int(row["games"]),
+                positions=int(row["positions"]),
+            )
+            for row in rows
         )
 
     def selfplay_outside(self, snapshot_id: str | None) -> tuple[int, int]:

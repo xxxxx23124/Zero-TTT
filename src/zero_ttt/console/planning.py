@@ -88,10 +88,13 @@ class TrainingDataPlanner:
         manifest = TrainingMixtureManifest(
             TRAINING_MIXTURE_SCHEMA.current,
             (
-                MixtureComponent(selfplay_snapshot, self.settings.mixture.selfplay),
+                MixtureComponent(
+                    selfplay_snapshot,
+                    self.config.training.mixture.selfplay_weight,
+                ),
                 MixtureComponent(
                     self.settings.cold_start_snapshot_id,
-                    self.settings.mixture.cold_start,
+                    self.config.training.mixture.cold_start_weight,
                 ),
             ),
         )

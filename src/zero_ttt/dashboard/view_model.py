@@ -7,7 +7,9 @@ from typing import Any
 ACTIVE_STATES = {"STARTING", "RUNNING", "STOP_REQUESTED"}
 
 
-def button_availability(snapshot: dict[str, Any]) -> dict[str, bool]:
+def button_availability(
+    snapshot: dict[str, Any], run_selected: bool = True
+) -> dict[str, bool]:
     job = snapshot.get("job") or {}
     console = snapshot.get("console") or {}
     job_state = str(job.get("state", "IDLE"))
@@ -17,11 +19,12 @@ def button_availability(snapshot: dict[str, Any]) -> dict[str, bool]:
     selfplay = console.get("selfplay") or {}
     cold = console.get("phase") == "COLD_START"
     return {
-        "reconcile": idle,
-        "train": idle and validated and ready,
-        "collect": idle and validated and ready and bool(console.get("publication_path")),
+        "reconcile": idle and run_selected,
+        "train": idle and run_selected and validated and ready,
+        "collect": idle and run_selected and validated and ready and bool(console.get("publication_path")),
         "warm_start": (
             idle
+            and run_selected
             and validated
             and ready
             and cold
@@ -29,7 +32,7 @@ def button_availability(snapshot: dict[str, Any]) -> dict[str, bool]:
             and int(selfplay.get("games", 0)) > 0
         ),
         "soft_stop": job_state in {"STARTING", "RUNNING", "STOP_REQUESTED"}
-        and job.get("operation") != "reconcile",
+        and bool(job.get("stoppable", job.get("operation") != "reconcile")),
     }
 
 

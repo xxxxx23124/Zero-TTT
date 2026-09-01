@@ -24,29 +24,39 @@ services:
       PYTHONPATH: /workspace/src
     command: ["/bin/bash"]
 
-  training-console:
-    extends:
-      service: dev
-    volumes:
-      - type: bind
-        source: .
-        target: /workspace
-      - zero-ttt-data-work:/datasets/work
-      - huggingface-cache:/cache/huggingface
-      - pip-cache:/cache/pip
-      - torch-cache:/cache/torch
-      - torch-extensions-cache:/cache/torch_extensions
-      - uv-cache:/cache/uv
-    command: ["zero-ttt", "console"]
-
   training-agent:
-    extends:
-      service: dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zero-ttt:torch2.13.0-cuda13.2-cudnn9-devel
+    working_dir: /workspace
+    gpus: all
+    shm_size: 8gb
+    init: true
     volumes:
       - type: bind
-        source: .
-        target: /workspace
-      - zero-ttt-data-work:/datasets/work
+        source: ./configs/profiles
+        target: /profiles
+        read_only: true
+      - type: bind
+        source: ./runs
+        target: /runs
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/raw
+        target: /datasets/raw
+        read_only: true
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/staging
+        target: /datasets/staging
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/manifests
+        target: /datasets/manifests
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/processed
+        target: /datasets/processed
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/catalog
+        target: /datasets/catalog
       - huggingface-cache:/cache/huggingface
       - pip-cache:/cache/pip
       - torch-cache:/cache/torch
@@ -55,7 +65,13 @@ services:
     environment:
       PIP_CACHE_DIR: /cache/pip
       PYTHONPATH: /workspace/src
-      ZERO_TTT_CONSOLE_CONFIG: /workspace/configs/console.toml
+      ZERO_TTT_SOURCE_ROOT: /datasets
+      ZERO_TTT_STAGING_ROOT: /datasets/staging
+      ZERO_TTT_MANIFEST_ROOT: /datasets/manifests
+      ZERO_TTT_CATALOG_PATH: /datasets/catalog/catalog.sqlite
+      ZERO_TTT_STORE_ROOT: /datasets/processed
+      ZERO_TTT_RUN_ROOT: /runs
+      ZERO_TTT_PROFILE_ROOT: /profiles
       ZERO_TTT_AGENT_HOST: 0.0.0.0
       ZERO_TTT_AGENT_PORT: "8090"
     command: ["zero-ttt-agent"]
@@ -63,7 +79,7 @@ services:
       - "8090"
     stop_grace_period: 30m
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8090/api/v1/healthz"]
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8090/api/v2/healthz"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -78,13 +94,13 @@ services:
     init: true
     volumes:
       - type: bind
-        source: .
-        target: /workspace
+        source: ./runs
+        target: /runs
         read_only: true
     command:
       - tensorboard
       - --logdir
-      - /workspace/runs
+      - /runs
       - --host
       - 0.0.0.0
       - --port
@@ -107,11 +123,6 @@ services:
     image: zero-ttt:torch2.13.0-cuda13.2-cudnn9-devel
     working_dir: /workspace
     init: true
-    volumes:
-      - type: bind
-        source: .
-        target: /workspace
-        read_only: true
     environment:
       PYTHONPATH: /workspace/src
       ZERO_TTT_AGENT_URL: http://training-agent:8090
@@ -198,4 +209,3 @@ volumes:
   torch-cache:
   torch-extensions-cache:
   uv-cache:
-  zero-ttt-data-work:

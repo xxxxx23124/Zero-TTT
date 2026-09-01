@@ -1,5 +1,4 @@
-schema_version = 7
-run_name = "rtx4090l-625m-fp32"
+schema_version = 8
 seed = 20260818
 
 [game]
@@ -24,14 +23,14 @@ centered = true
 learnable = false
 
 [model.hypernet]
-enabled = true
+enabled = false
 num_layers = 16
 rank = 8
 hidden_dim = 128
 context_gradient_scale = 0.1
 
 [model.depth_mixing]
-enabled = true
+enabled = false
 dilation = 4
 period = 4
 
@@ -58,6 +57,10 @@ checkpoint_keep = 2
 learning_rate_multiplier = 0.1
 gradient_clip = 0.1
 
+[training.mixture]
+selfplay_weight = 0.8
+cold_start_weight = 0.2
+
 [execution]
 activation_checkpoint = true
 activation_checkpoint_stride = 1
@@ -80,6 +83,5 @@ inference_cache_size = 32768
 compile_inference = true
 
 [runtime]
-run_dir = "runs/rtx4090l-625m-fp32"
 device = "cuda"
 ema_device = "cpu"

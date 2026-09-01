@@ -1,86 +1,65 @@
-# Docker 训练控制台
+# 本地 Web 训练中心
 
-控制台是 `src/zero_ttt/console/` 中的纯编排层。它复用现有 Learner、不可变 snapshot/mixture、
-publication 和自博弈采集器，不管理学习率、梯度累积、MCTS 或模型结构。
+Zero-TTT 的普通用户入口是本机 NiceGUI 页面。页面通过容器内部的 FastAPI 代理启动独立子进程，
+不直接导入 Learner、数据实现，也不接触 Docker Socket。
 
-## 首次配置
+## Windows 目录
 
-编辑 `configs/console.toml`：
+默认数据根目录是 `D:\datasets\Zero-TTT`，可用 `ZERO_TTT_DATA_ROOT` 覆盖：
 
-- `experiment_config` 相对控制台 TOML 所在目录解析，默认指向 `rtx4090l.toml`；
-- `catalog_path` 和 `store_root` 默认使用 Compose 的 `/datasets/work` 命名卷；
-- `cold_start_snapshot_id` 必须替换为已经创建并验证的 64 位 train snapshot ID；
-- `max_runtime_hours` 默认 8 小时，每次选择采集、训练或 warm-start 时重新计时。
-- `[mixture]` 保存自博弈和冷启动 rehearsal 权重；当前模板为 `0.8/0.2`。
-
-占位的全零 snapshot 会被配置校验拒绝。控制台不会猜测监督数据集，也不会自动导入原始数据。
-
-## 启动与菜单
-
-```bash
-docker compose run --rm training-console
+```text
+D:\datasets\Zero-TTT\
+├── raw\          # 原始 ZIP，只读挂载
+├── staging\      # 可重建中间文件
+├── manifests\    # 来源 manifest 与校验记录
+├── processed\    # trajectory / annotation NPZ shard
+└── catalog\      # SQLite catalog
 ```
 
-启动时控制台锁定实验 `run_dir`，校验 catalog/cold snapshot，并从最新完整 checkpoint 恢复阶段。
-产物协调器按 run、step、samples 和完整配置身份核对 checkpoint/publication；如果 publication
-缺失、较旧或属于其他 run，会用 checkpoint 的 slow/EMA 权重补发，并幂等修复 catalog 登记和
-checkpoint 中的发布边界。相同 run 的 publication 超前或同 step 冲突不会自动回退。菜单包括：
+训练任务位于仓库的 `runs/<run_id>/`。每个任务保存 `run.json`、冻结的 `experiment.toml`、
+checkpoint、publication、TensorBoard、mixture 和控制状态。业务文件不写入 Docker 命名卷；
+命名卷只保存 pip、Torch、Hugging Face 等可删除缓存。
 
-1. 刷新状态；
-2. 收集数据；
-3. 开始训练；
-4. warm-start；
-5. 退出。
+## 启动
 
-同一功能也提供非交互命令，供容器内训练代理调用：
+确认 Docker Desktop 已运行，然后在仓库根目录执行：
 
-```bash
-zero-ttt console --config configs/console.toml status --json
-zero-ttt console --config configs/console.toml reconcile --events jsonl
-zero-ttt console --config configs/console.toml train --events jsonl
-zero-ttt console --config configs/console.toml collect --events jsonl
-zero-ttt console --config configs/console.toml warm-start --events jsonl
-```
-
-## NiceGUI 与 TensorBoard
-
-```bash
+```powershell
 docker compose up --build training-ui
 ```
 
-该命令会一并启动 `training-agent` 和 `tensorboard`。NiceGUI 只绑定本机
-`http://127.0.0.1:8080`，TensorBoard 只绑定 `http://127.0.0.1:6006`；训练代理只在 Compose
-内部网络开放。UI 不编辑配置，提供训练、MCTS 收集、warm-start、重新校验和安全暂停。
+浏览器打开 `http://127.0.0.1:8080`。TensorBoard 位于 `http://127.0.0.1:6006`，训练代理只在
+Compose 内部网络开放。
 
-训练代理是唯一子进程所有者，同一时间只运行一个操作。安全暂停发送 SIGTERM，训练在当前
-optimizer step 后保存 checkpoint/publication；采集在当前完整 actor 轮次封存后停止。UI 状态
-来自代理缓存，完整 checkpoint 只在启动和操作前 reconcile 时加载。
+## 首次数据准备
 
-TensorBoard 日志写入 `runtime.run_dir/tensorboard/<run_id>`。恢复训练会以 checkpoint step
-清除其后的残留事件，避免异常退出留下重复曲线。
+把 KataGo g170 ZIP 放入 `raw\katago\g170\selfplay\`，然后在网页依次执行：
 
-状态中的“未纳入最新训练 snapshot”是集合差：它表示尚未进入当前 checkpoint 数据身份的完整
-自博弈棋局，不表示随机采样已经逐一训练过 snapshot 内的所有棋局。
-其中 games、positions、pending 和新建 mixture snapshot 只统计已 `sealed` 的自博弈 task；
-`collecting`/`failed` task 仍显示任务数，但不会进入训练数据。
+1. 扫描并校验：建立包含路径、大小和 SHA-256 的来源 manifest；
+2. 试导入 1000 局：验证 importer、shard 和 catalog 闭环；
+3. 继续全量导入：按 game ID 去重，自动续接试导入结果；
+4. 校验数据：恢复 orphan、核对已登记 shard，并写校验记录；
+5. 创建训练 Snapshot：固定使用 external/train、seed 7 和 10% validation 切分。
 
-## 软停止和阶段切换
+扫描可在源文件边界安全暂停，导入可在原子 shard 边界安全暂停。下次全量导入会跳过已登记棋局。
+只有全量导入完成且校验记录仍与 manifest/catalog 统计一致时，页面才允许创建 snapshot。
 
-- 采集以 `selfplay.actor_count` 个并发完整棋局为一轮；到时后完成当前轮、封存 shard 和 task，
-  再返回菜单。
-- 训练到时后完成当前 optimizer step，原子保存 checkpoint，强制发布 slow/EMA 权重，再保存
-  已更新 publication 边界的 checkpoint。
-- 首次 SIGINT/SIGTERM 与到时使用相同的软停止路径；异常则记录 `FAILED`，下次启动验证产物后
-  恢复 `READY`。
-- warm-start 只在冷启动完整 checkpoint 和自博弈数据都存在时开放。它保留权重、optimizer、
-  RNG、step、samples 和样本尺度调度，建立 80% self-play / 20% cold rehearsal mixture，并在
-  至少一个新 step 成功保存后提交 `MIXTURE` 阶段。
-- Mixture 阶段每次训练都会从当前全部自博弈完整棋局创建新 snapshot；身份未变则严格 resume，
-  有新棋局则执行显式数据身份迁移。
+## 训练任务
 
-控制台状态写入 `runtime.run_dir/console/state.json`，mixture manifest 写入同目录的 `mixtures/`。
-模型与数据产物仍由原有 checkpoint、publication、shard 和 catalog 负责，控制台状态丢失时不得
-替代这些事实源。
+创建任务时输入名称，并选择训练方案与 cold snapshot。任务建立后，这两个身份不可修改；更换方案
+或 snapshot 必须创建新任务。方案 TOML 只保存模型、学习率、搜索、自博弈和 mixture 等稳定参数，
+页面不提供修改这些深层超参数的接口。
 
-状态机、产物恢复、数据计划和软停止的实现约束见
-[源码旁控制台说明](../../src/zero_ttt/console/README.md)。
+单次运行时长是操作参数，不进入配置哈希。训练、安全暂停、MCTS 收集与 warm-start 沿用原有
+原子 checkpoint/publication、sealed 自博弈任务和显式数据身份迁移规则。
+
+## 恢复与并发
+
+数据和训练共享一个全局作业锁，同一时间只有一个写操作。训练在 optimizer step 后暂停；采集在
+完整 actor 轮次封存后暂停。页面轮询代理缓存，不反复加载完整 checkpoint。
+
+旧 `configs/console.toml`、交互式菜单和旧 console state 不再读取。历史目录不会被自动删除；只有
+带当前 `run.json` 与冻结配置的新任务目录会出现在页面。
+
+内部边界见[控制编排说明](../../src/zero_ttt/console/README.md)，Docker 测试命令见
+[Docker 运维](docker.md)。

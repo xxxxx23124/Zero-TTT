@@ -6,7 +6,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from zero_ttt.data.catalog_types import SelfPlayStatistics
+from zero_ttt.data.catalog_types import ImportStatistics, SelfPlayStatistics
 from zero_ttt.data.manifest import ManifestAsset, SourceManifest
 from zero_ttt.data.records import AnnotationRecord, ImportEvent, TrajectoryRecord
 from zero_ttt.data.shards import ShardInfo, ShardStore
@@ -273,6 +273,35 @@ class CatalogRepository:
             failed_tasks=task_counts.get("failed", 0),
             games=int(trajectory["games"]),
             positions=int(trajectory["positions"]),
+        )
+
+    def import_statistics(self, dataset_id: str) -> ImportStatistics:
+        status_counts = {
+            str(row["status"]): int(row["count"])
+            for row in self.connection.execute(
+                "SELECT status,COUNT(*) AS count FROM assets "
+                "WHERE dataset_id=? AND source_kind='external' GROUP BY status",
+                (dataset_id,),
+            )
+        }
+        row = self.connection.execute(
+            """
+            SELECT COUNT(DISTINCT t.game_id) AS games,
+                   COALESCE(SUM(t.trainable_positions), 0) AS positions,
+                   COUNT(DISTINCT t.shard_sha256) AS shards
+            FROM trajectories t
+            JOIN assets a ON a.asset_sha256=t.asset_sha256
+            WHERE a.dataset_id=? AND a.source_kind='external' AND t.deleted=0
+            """,
+            (dataset_id,),
+        ).fetchone()
+        return ImportStatistics(
+            verified_assets=status_counts.get("verified", 0),
+            partial_assets=status_counts.get("partial", 0),
+            imported_assets=status_counts.get("imported", 0),
+            games=int(row["games"]),
+            positions=int(row["positions"]),
+            shards=int(row["shards"]),
         )
 
     def record_publication(

@@ -1,6 +1,6 @@
 # `zero_ttt.console`
 
-`console` 是 Docker 交互式训练的编排层。用户配置和操作见
+`console` 是 Web 训练代理调用的非交互编排层。用户配置和操作见
 [训练控制台指南](../../../docs/operations/training-console.md)；本文只说明内部状态、恢复和阶段
 切换约束。
 
@@ -10,7 +10,7 @@
 `TRAINING`、`WARM_STARTING`、`SOFT_STOPPING`、`FAILED`。所有状态变化必须通过显式转移表，
 并由 `StateStore` 原子写入当前 schema 的 JSON。
 
-`ConsoleLock` 保证同一 run 同时只有一个控制台编排者。状态文件只服务菜单和审计；checkpoint、
+`ConsoleLock` 保证同一 run 同时只有一个控制台编排者。状态文件只服务页面和审计；checkpoint、
 publication、Catalog、snapshot 和 shard 仍是事实源。
 
 ## 启动恢复
@@ -26,8 +26,8 @@ publication、Catalog、snapshot 和 shard 仍是事实源。
 ## 数据规划与阶段切换
 
 `TrainingDataPlanner` 在 cold-start 阶段构造单 snapshot `CatalogBatchSource`；mixture 阶段从全部
-已 sealed 自博弈数据创建新 snapshot，并按 `configs/console.toml` 的 `mixture` 权重写不可变
-mixture manifest；当前模板是 80% self-play / 20% cold rehearsal。
+已 sealed 自博弈数据创建新 snapshot，并按任务冻结实验配置中的 `training.mixture` 权重写不可变
+mixture manifest；当前 profile 是 80% self-play / 20% cold rehearsal。
 
 数据身份未变时严格 resume；新自博弈棋局导致 snapshot 变化时，只能通过
 `restore_for_data_transition` 保留模型、优化器、RNG、step 和 samples，并写 `MigrationRecord`。

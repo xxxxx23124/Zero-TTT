@@ -21,6 +21,9 @@ def test_load_test_config_is_stable() -> None:
     assert first.search.max_simulations == 64
     assert not hasattr(first, "replay")
     assert first.selfplay.inference_batch_size == 16
+    assert first.training.mixture.selfplay_weight == 0.8
+    assert not hasattr(first, "run_name")
+    assert not hasattr(first.runtime, "run_dir")
 
 
 def test_unknown_config_field_is_rejected(tmp_path: Path) -> None:
@@ -34,6 +37,6 @@ def test_unknown_config_field_is_rejected(tmp_path: Path) -> None:
 def test_previous_config_schema_is_rejected(tmp_path: Path) -> None:
     source = Path("configs/test.toml").read_text(encoding="utf-8")
     path = tmp_path / "v6.toml"
-    path.write_text(source.replace("schema_version = 7", "schema_version = 6"), encoding="utf-8")
-    with pytest.raises(ValueError, match=r"experiment config.*expected v7.*current template"):
+    path.write_text(source.replace("schema_version = 8", "schema_version = 7"), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"experiment config.*expected v8.*current template"):
         load_config(path)

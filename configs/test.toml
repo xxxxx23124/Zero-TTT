@@ -1,5 +1,4 @@
-schema_version = 7
-run_name = "test"
+schema_version = 8
 seed = 7
 
 [game]
@@ -58,6 +57,10 @@ checkpoint_keep = 2
 learning_rate_multiplier = 0.1
 gradient_clip = 0.1
 
+[training.mixture]
+selfplay_weight = 0.8
+cold_start_weight = 0.2
+
 [execution]
 activation_checkpoint = false
 activation_checkpoint_stride = 2
@@ -80,6 +83,5 @@ inference_cache_size = 32768
 compile_inference = false
 
 [runtime]
-run_dir = "runs/test"
 device = "cpu"
 ema_device = "cpu"

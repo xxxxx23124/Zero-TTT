@@ -2,10 +2,18 @@ services:
   dev:
     volumes:
       - type: bind
-        source: ${ZERO_TTT_DATASET_ROOT:?set ZERO_TTT_DATASET_ROOT to the external dataset directory}
-        target: /datasets/zero-ttt
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/raw
+        target: /datasets/raw
         read_only: true
-      - zero-ttt-data-work:/datasets/work
-
-volumes:
-  zero-ttt-data-work:
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/staging
+        target: /datasets/staging
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/manifests
+        target: /datasets/manifests
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/processed
+        target: /datasets/processed
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/catalog
+        target: /datasets/catalog

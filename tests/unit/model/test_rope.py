@@ -141,7 +141,7 @@ def test_rope_rejects_invalid_configuration_layout_and_token_count() -> None:
 
 
 def test_production_rope_frequency_span_is_stable() -> None:
-    config = load_config("configs/rtx4090l.toml")
+    config = load_config("configs/profiles/rtx4090l.toml")
     head_dim = config.model.d_model // config.model.n_heads
     layout = TokenLayout(board_tokens=BOARD_AREA, special_tokens=1)
     rope = AxialRoPE2D(config.model.rope, head_dim, layout)

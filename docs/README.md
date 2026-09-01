@@ -12,7 +12,7 @@
 - [Learner 与流程边界](architecture/learner-and-workflows.md)
 - [公共契约](architecture/contracts.md)
 - [Docker 运维](operations/docker.md)
-- [Docker 训练控制台](operations/training-console.md)
+- [本地 Web 训练中心](operations/training-console.md)
 
 ## 数据采集与训练路线
 
@@ -37,7 +37,7 @@
 - [Publication 推理与聚批](../src/zero_ttt/inference/README.md)
 - [OpenSpiel 搜索适配](../src/zero_ttt/search/README.md)
 - [MCTS 自博弈采集](../src/zero_ttt/selfplay/README.md)
-- [训练控制台内部编排](../src/zero_ttt/console/README.md)
+- [Web 训练控制内部编排](../src/zero_ttt/console/README.md)
 
 ## 未来研究
 

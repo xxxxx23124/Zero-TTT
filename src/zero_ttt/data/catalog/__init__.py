@@ -12,8 +12,10 @@ from zero_ttt.data.catalog_session import CatalogSession
 from zero_ttt.data.catalog_snapshots import SnapshotService, SnapshotSpec
 from zero_ttt.data.catalog_types import (
     AnnotationLocator,
+    ImportStatistics,
     SelfPlayStatistics,
     SnapshotStatistics,
+    SnapshotSummary,
     TrajectoryLocator,
 )
 from zero_ttt.data.manifest import ManifestAsset, SourceManifest
@@ -23,8 +25,10 @@ from zero_ttt.data.shards import ShardInfo, ShardStore
 __all__ = [
     "AnnotationLocator",
     "Catalog",
+    "ImportStatistics",
     "SelfPlayStatistics",
     "SnapshotStatistics",
+    "SnapshotSummary",
     "TrajectoryLocator",
 ]
 
@@ -120,8 +124,14 @@ class Catalog:
     def selfplay_statistics(self) -> SelfPlayStatistics:
         return self.repository.selfplay_statistics()
 
+    def import_statistics(self, dataset_id: str) -> ImportStatistics:
+        return self.repository.import_statistics(dataset_id)
+
     def snapshot_statistics(self, snapshot_id: str) -> SnapshotStatistics:
         return self.snapshots.statistics(snapshot_id)
+
+    def list_snapshots(self) -> tuple[SnapshotSummary, ...]:
+        return self.snapshots.list()
 
     def selfplay_outside_snapshot(self, snapshot_id: str | None) -> tuple[int, int]:
         return self.snapshots.selfplay_outside(snapshot_id)

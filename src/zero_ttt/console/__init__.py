@@ -1,6 +1,6 @@
-"""Interactive Docker training console orchestration."""
+"""Non-interactive training orchestration used by the local web agent."""
 
-from zero_ttt.console.config import ConsoleConfig, load_console_config
+from zero_ttt.console.config import RunContext
 from zero_ttt.console.engine import TrainingConsole
 
-__all__ = ["ConsoleConfig", "TrainingConsole", "load_console_config"]
+__all__ = ["RunContext", "TrainingConsole"]

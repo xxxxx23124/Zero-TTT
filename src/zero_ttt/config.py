@@ -67,6 +67,12 @@ class HypernetTrainingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class MixtureConfig:
+    selfplay_weight: float
+    cold_start_weight: float
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingConfig:
     batch_size: int
     accumulation_steps: int
@@ -86,6 +92,7 @@ class TrainingConfig:
     publish_interval_samples: int
     checkpoint_keep: int
     hypernet: HypernetTrainingConfig
+    mixture: MixtureConfig
 
     @property
     def effective_batch_size(self) -> int:
@@ -123,7 +130,6 @@ class SelfPlayConfig:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeConfig:
-    run_dir: str
     device: str
     ema_device: str
 
@@ -131,7 +137,6 @@ class RuntimeConfig:
 @dataclass(frozen=True, slots=True)
 class ExperimentConfig:
     schema_version: int
-    run_name: str
     seed: int
     game: GameConfig
     model: ModelConfig
@@ -147,11 +152,6 @@ class ExperimentConfig:
     @property
     def sha256(self) -> str:
         return sha256_bytes(self.canonical_json().encode("utf-8"))
-
-    @property
-    def run_dir(self) -> Path:
-        return Path(self.runtime.run_dir)
-
 
 def _coerce_value(expected: Any, value: Any, path: str) -> Any:
     origin = get_origin(expected)
@@ -280,6 +280,9 @@ def _validate_training(train: TrainingConfig) -> None:
         raise ValueError("training.hypernet.learning_rate_multiplier must be non-negative")
     if train.hypernet.gradient_clip <= 0:
         raise ValueError("training.hypernet.gradient_clip must be positive")
+    mixture = train.mixture
+    if mixture.selfplay_weight <= 0 or mixture.cold_start_weight <= 0:
+        raise ValueError("training.mixture weights must be positive")
     if not (0 < train.beta1 < 1 and 0 < train.beta2 < 1):
         raise ValueError("AdamW beta values must be in (0, 1)")
 

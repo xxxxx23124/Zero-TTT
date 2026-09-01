@@ -37,9 +37,32 @@ class SelfPlayStatistics:
 
 
 @dataclass(frozen=True, slots=True)
+class ImportStatistics:
+    verified_assets: int
+    partial_assets: int
+    imported_assets: int
+    games: int
+    positions: int
+    shards: int
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotStatistics:
     snapshot_id: str
     source_kind: str | None
     task_id: str | None
+    games: int
+    positions: int
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotSummary:
+    snapshot_id: str
+    seed: int
+    split: str
+    validation_fraction: float
+    source_kind: str | None
+    task_id: str | None
+    created_ns: int
     games: int
     positions: int

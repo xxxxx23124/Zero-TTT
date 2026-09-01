@@ -1,6 +1,6 @@
 # 统一训练生命周期
 
-状态：冻结 publication、自博弈封存、snapshot mixture、Learner 消费和 Docker 交互式状态机已实现；
+状态：冻结 publication、自博弈封存、snapshot mixture、Learner 消费和本地 Web 状态机已实现；
 无人值守自动长期循环尚未实现。网络 raw policy 不是自身的改进标签。
 
 ## 阶段
@@ -53,4 +53,4 @@ Human-SL 阶段只表示课程身份，不等同精确人类段位。
 
 序列存储见[数据契约](../../src/zero_ttt/data/trajectory-storage.md)，搜索边界见
 [OpenSpiel MCTS](../../src/zero_ttt/search/README.md)，人工分阶段运行见
-[Docker 训练控制台](../operations/training-console.md)。
+[本地 Web 训练中心](../operations/training-console.md)。
