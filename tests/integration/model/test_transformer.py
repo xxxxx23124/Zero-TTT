@@ -4,13 +4,12 @@ from dataclasses import replace
 
 import numpy as np
 import torch
-
 from zero_ttt.config import load_config
 from zero_ttt.game.features import encode_position
 from zero_ttt.game.rules import PASS_ACTION
 from zero_ttt.game.state import GameState
 from zero_ttt.model import PolicyValueTransformer
-from zero_ttt.training.losses import TrainingTargets, compute_losses
+from zero_ttt_trainer.losses import TrainingTargets, compute_losses
 
 
 def tensors_for_empty(batch: int = 2) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

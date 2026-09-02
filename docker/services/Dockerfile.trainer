@@ -1,0 +1,21 @@
+ARG PYTORCH_IMAGE=pytorch/pytorch:2.13.0-cuda13.2-cudnn9-runtime
+FROM ${PYTORCH_IMAGE}
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+WORKDIR /workspace
+COPY requirements.lock ./requirements.lock
+COPY packages ./packages
+COPY services/trainer ./services/trainer
+RUN python -c "import torch; assert torch.__version__ == '2.13.0+cu132', torch.__version__" \
+    && python -m pip install --break-system-packages --no-cache-dir -c requirements.lock \
+      "numpy>=2.0" "pydantic>=2.10,<3" "tensorboard>=2.18,<3" \
+    && python -m pip install --break-system-packages --no-cache-dir --no-deps \
+    ./packages/core ./packages/game ./packages/model ./packages/contracts \
+    ./packages/worker-runtime ./packages/dataset ./services/trainer
+
+CMD ["zero-ttt-trainer-worker"]

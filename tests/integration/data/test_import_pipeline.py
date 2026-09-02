@@ -6,13 +6,12 @@ import zipfile
 from pathlib import Path
 
 import pytest
-
-from zero_ttt.data.catalog import Catalog
-from zero_ttt.data.importers import KataGoSgfImporter
-from zero_ttt.data.manifest import ManifestAsset, SourceManifest
-from zero_ttt.data.pipeline import import_manifest
-from zero_ttt.data.shards import ShardStore
 from zero_ttt.versioning import SOURCE_MANIFEST_SCHEMA
+from zero_ttt_data.importers import KataGoSgfImporter
+from zero_ttt_data.importing import import_source
+from zero_ttt_data.manifest import ManifestAsset, SourceManifest
+from zero_ttt_data.snapshots import SnapshotSpec
+from zero_ttt_data.unit_of_work import DataUnitOfWork
 
 
 def test_source_manifest_round_trip_and_previous_schema_rejection(
@@ -27,7 +26,7 @@ def test_source_manifest_round_trip_and_previous_schema_rejection(
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["schema_version"] = SOURCE_MANIFEST_SCHEMA.current - 1
     path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(ValueError, match=r"source manifest.*expected v2"):
+    with pytest.raises(ValueError, match=r"source manifest.*expected v1"):
         SourceManifest.load(path)
 
 
@@ -137,21 +136,23 @@ def test_capped_import_counts_only_new_games_and_finishes_only_at_eof(
 
     statuses = []
     for _ in range(3):
-        summary = import_manifest(
-            manifest_path,
-            tmp_path,
-            store_root,
-            catalog_path,
+        summary = import_source(
+            manifest_path=manifest_path,
+            source_root=tmp_path,
+            shard_root=store_root,
+            database_path=catalog_path,
             max_accepted=1,
             target_shard_bytes=1024,
         )
         assert summary.accepted == 1
-        with Catalog(catalog_path, ShardStore(store_root)) as catalog:
-            statuses.append(catalog.asset_status(asset.sha256))
+        with DataUnitOfWork(catalog_path, store_root) as unit:
+            statuses.append(unit.repository.asset_status(asset.sha256))
     assert statuses == ["partial", "partial", "imported"]
-    with Catalog(catalog_path, ShardStore(store_root)) as catalog:
-        snapshot_id = catalog.create_snapshot(seed=1, validation_fraction=0.0)
-        assert len(catalog.snapshot_trajectories(snapshot_id)) == 3
+    with DataUnitOfWork(catalog_path, store_root) as unit:
+        snapshot_id = unit.snapshots.create(
+            SnapshotSpec(seed=1, split="train", validation_fraction=0.0)
+        )
+        assert len(unit.snapshots.trajectories(snapshot_id)) == 3
 
 
 def test_import_soft_stop_flushes_an_atomic_partial_shard_and_resumes(
@@ -173,23 +174,25 @@ def test_import_soft_stop_flushes_an_atomic_partial_shard_and_resumes(
         calls += 1
         return calls >= 4
 
-    first = import_manifest(
-        manifest_path,
-        tmp_path,
-        tmp_path / "processed",
-        tmp_path / "catalog.sqlite",
+    first = import_source(
+        manifest_path=manifest_path,
+        source_root=tmp_path,
+        shard_root=tmp_path / "processed",
+        database_path=tmp_path / "catalog.sqlite",
+        max_accepted=None,
         target_shard_bytes=1024 * 1024,
         stop_requested=stop_requested,
     )
     assert 0 < first.accepted < 3
-    with Catalog(tmp_path / "catalog.sqlite", ShardStore(tmp_path / "processed")) as catalog:
-        assert catalog.recover() == ()
-        assert catalog.asset_status(asset.sha256) == "partial"
+    with DataUnitOfWork(tmp_path / "catalog.sqlite", tmp_path / "processed") as unit:
+        assert unit.lifecycle.recover() == ()
+        assert unit.repository.asset_status(asset.sha256) == "partial"
 
-    resumed = import_manifest(
-        manifest_path,
-        tmp_path,
-        tmp_path / "processed",
-        tmp_path / "catalog.sqlite",
+    resumed = import_source(
+        manifest_path=manifest_path,
+        source_root=tmp_path,
+        shard_root=tmp_path / "processed",
+        database_path=tmp_path / "catalog.sqlite",
+        max_accepted=None,
     )
     assert first.accepted + resumed.accepted == 3

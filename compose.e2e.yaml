@@ -1,0 +1,56 @@
+services:
+  control:
+    volumes:
+      - e2e-control-state:/state/control
+      - type: bind
+        source: ./configs
+        target: /profiles
+        read_only: true
+
+  data-worker:
+    volumes:
+      - e2e-raw:/raw:ro
+      - e2e-work:/work
+      - e2e-data-artifacts:/artifacts/data
+      - e2e-selfplay-artifacts:/artifacts/selfplay:ro
+      - e2e-data-state:/state/data
+
+  trainer-worker:
+    volumes:
+      - e2e-work:/work
+      - e2e-data-artifacts:/artifacts/data:ro
+      - e2e-model-artifacts:/artifacts/models
+
+  selfplay-worker:
+    volumes:
+      - e2e-work:/work
+      - e2e-model-artifacts:/artifacts/models:ro
+      - e2e-selfplay-artifacts:/artifacts/selfplay
+
+  tensorboard:
+    volumes:
+      - e2e-model-artifacts:/artifacts/models:ro
+
+  dev:
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+      - e2e-root:/datasets
+      - e2e-raw:/datasets/raw
+      - e2e-work:/datasets/work
+      - e2e-data-artifacts:/datasets/artifacts/data
+      - e2e-model-artifacts:/datasets/artifacts/models
+      - e2e-selfplay-artifacts:/datasets/artifacts/selfplay
+      - e2e-control-state:/datasets/state/control
+      - e2e-data-state:/datasets/state/data
+
+volumes:
+  e2e-root:
+  e2e-raw:
+  e2e-work:
+  e2e-data-artifacts:
+  e2e-model-artifacts:
+  e2e-selfplay-artifacts:
+  e2e-control-state:
+  e2e-data-state:

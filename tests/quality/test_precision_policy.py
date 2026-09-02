@@ -6,7 +6,7 @@ from pathlib import Path
 
 def test_runtime_has_no_reduced_precision_execution_paths() -> None:
     violations: list[str] = []
-    roots = (Path("src/zero_ttt"), Path("scripts"))
+    roots = (Path("packages/model"), Path("services/trainer"), Path("services/selfplay"))
     for root in roots:
         for path in sorted(root.rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

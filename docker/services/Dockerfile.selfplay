@@ -1,0 +1,59 @@
+ARG PYTORCH_IMAGE=pytorch/pytorch:2.13.0-cuda13.2-cudnn9-devel
+FROM ${PYTORCH_IMAGE} AS selfplay
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    CXX=g++
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends build-essential git ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY docker/services/open-spiel.requirements.lock ./open-spiel.requirements.lock
+COPY third_party/open_spiel ./third_party/open_spiel
+RUN set -eux; \
+    fetch_repo() { destination="$1"; url="$2"; revision="$3"; \
+      git clone --filter=blob:none --no-checkout "$url" "$destination"; \
+      git -C "$destination" checkout --detach "$revision"; rm -rf "$destination/.git"; }; \
+    fetch_repo third_party/open_spiel/pybind11 https://github.com/pybind/pybind11.git e86205cb2ba070755d582856430c0f83c0af6694; \
+    fetch_repo third_party/open_spiel/open_spiel/games/bridge/double_dummy_solver https://github.com/jblespiau/dds.git 091ea94358a4016d4fb6069dea5c452cdc98d0bd; \
+    fetch_repo third_party/open_spiel/open_spiel/abseil-cpp https://github.com/abseil/abseil-cpp.git d38452e1ee03523a208362186fd42248ff2609f6; \
+    fetch_repo third_party/open_spiel/open_spiel/json https://github.com/nlohmann/json.git 9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03; \
+    fetch_repo third_party/open_spiel/open_spiel/pybind11_json https://github.com/pybind/pybind11_json.git d0bf434be9d287d73a963ff28745542daf02c08f; \
+    fetch_repo third_party/open_spiel/open_spiel/pybind11_abseil https://github.com/pybind/pybind11_abseil.git 73992b5; \
+    python -m pip install --break-system-packages --no-build-isolation \
+      -c open-spiel.requirements.lock ./third_party/open_spiel
+
+COPY requirements.lock ./requirements.lock
+COPY packages ./packages
+COPY services/selfplay ./services/selfplay
+RUN python -c "import torch; assert torch.__version__ == '2.13.0+cu132', torch.__version__" \
+    && python -m pip install --break-system-packages --no-cache-dir -c requirements.lock \
+      "numpy>=2.0" "pydantic>=2.10,<3" \
+    && python -m pip install --break-system-packages --no-cache-dir --no-deps \
+    ./packages/core ./packages/game ./packages/model ./packages/contracts \
+    ./packages/worker-runtime ./packages/dataset ./services/selfplay
+
+ENV ZERO_TTT_OPEN_SPIEL_REVISION=112b77704631fc2ce7ad8e4581f6ca09798ce15a
+CMD ["zero-ttt-selfplay-worker"]
+
+FROM selfplay AS dev
+COPY services ./services
+COPY configs ./configs
+COPY scripts ./scripts
+COPY tests ./tests
+COPY tools ./tools
+COPY pyproject.toml uv.lock README.md ./
+RUN python -m pip install --break-system-packages --no-cache-dir -c requirements.lock \
+      "fastapi>=0.115,<1" "uvicorn>=0.34,<1" "sgfmill==1.1.1" \
+      "nicegui>=2,<4" "tensorboard>=2.18,<3" \
+      "httpx>=0.28,<1" "pyright>=1.1,<2" "pytest>=8,<10" "ruff>=0.12,<1" \
+    && python -m pip install --break-system-packages --no-cache-dir --no-deps \
+    ./services/control ./services/data ./services/trainer ./services/ui ./tools/admin-cli \
+    && python -c "import pyspiel, torch; assert torch.__version__ == '2.13.0+cu132'; print(pyspiel.__doc__ is not None)"
+CMD ["/bin/bash"]

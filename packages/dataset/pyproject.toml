@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zero-ttt-dataset"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=2.0",
+  "pydantic>=2.10,<3",
+  "zero-ttt-contracts==1.0.0",
+  "zero-ttt-core==1.0.0",
+  "zero-ttt-game==1.0.0",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

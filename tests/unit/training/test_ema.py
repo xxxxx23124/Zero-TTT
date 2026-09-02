@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
-
-from zero_ttt.training.ema import ema_decay, update_slow_weights
+from zero_ttt_trainer.ema import ema_decay, update_slow_weights
 
 
 def test_sample_based_ema_uses_equivalent_batched_decay() -> None:

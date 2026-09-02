@@ -1,131 +1,150 @@
+name: zero-ttt
+
 services:
-  dev:
+  control:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: zero-ttt:torch2.13.0-cuda13.2-cudnn9-devel
-    working_dir: /workspace
-    gpus: all
-    shm_size: 8gb
+      dockerfile: docker/services/Dockerfile.cpu
+      args:
+        SERVICE: control
+    image: zero-ttt/control:1.0.0
     init: true
-    stdin_open: true
-    tty: true
+    restart: unless-stopped
+    environment:
+      ZERO_TTT_CONTROL_DB: /state/control/control.sqlite
+      ZERO_TTT_PROFILE_ROOT: /profiles
+      ZERO_TTT_CONTROL_HOST: 0.0.0.0
+      ZERO_TTT_CONTROL_PORT: "8090"
+      ZERO_TTT_LEASE_SECONDS: "60"
     volumes:
       - type: bind
-        source: .
-        target: /workspace
-      - huggingface-cache:/cache/huggingface
-      - pip-cache:/cache/pip
-      - torch-cache:/cache/torch
-      - torch-extensions-cache:/cache/torch_extensions
-      - uv-cache:/cache/uv
-    environment:
-      PIP_CACHE_DIR: /cache/pip
-      PYTHONPATH: /workspace/src
-    command: ["/bin/bash"]
-
-  training-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: zero-ttt:torch2.13.0-cuda13.2-cudnn9-devel
-    working_dir: /workspace
-    gpus: all
-    shm_size: 8gb
-    init: true
-    volumes:
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/state/control
+        target: /state/control
       - type: bind
         source: ./configs/profiles
         target: /profiles
         read_only: true
-      - type: bind
-        source: ./runs
-        target: /runs
-      - type: bind
-        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/raw
-        target: /datasets/raw
-        read_only: true
-      - type: bind
-        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/staging
-        target: /datasets/staging
-      - type: bind
-        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/manifests
-        target: /datasets/manifests
-      - type: bind
-        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/processed
-        target: /datasets/processed
-      - type: bind
-        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/catalog
-        target: /datasets/catalog
-      - huggingface-cache:/cache/huggingface
-      - pip-cache:/cache/pip
-      - torch-cache:/cache/torch
-      - torch-extensions-cache:/cache/torch_extensions
-      - uv-cache:/cache/uv
-    environment:
-      PIP_CACHE_DIR: /cache/pip
-      PYTHONPATH: /workspace/src
-      ZERO_TTT_SOURCE_ROOT: /datasets
-      ZERO_TTT_STAGING_ROOT: /datasets/staging
-      ZERO_TTT_MANIFEST_ROOT: /datasets/manifests
-      ZERO_TTT_CATALOG_PATH: /datasets/catalog/catalog.sqlite
-      ZERO_TTT_STORE_ROOT: /datasets/processed
-      ZERO_TTT_RUN_ROOT: /runs
-      ZERO_TTT_PROFILE_ROOT: /profiles
-      ZERO_TTT_AGENT_HOST: 0.0.0.0
-      ZERO_TTT_AGENT_PORT: "8090"
-    command: ["zero-ttt-agent"]
-    expose:
-      - "8090"
-    stop_grace_period: 30m
+    command: ["zero-ttt-control"]
+    ports:
+      - "127.0.0.1:8090:8090"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8090/api/v2/healthz"]
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8090/healthz"]
       interval: 5s
       timeout: 3s
-      retries: 12
+      retries: 20
       start_period: 5s
 
-  tensorboard:
+  data-worker:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: zero-ttt:torch2.13.0-cuda13.2-cudnn9-devel
-    working_dir: /workspace
+      dockerfile: docker/services/Dockerfile.cpu
+      args:
+        SERVICE: data
+    image: zero-ttt/data:1.0.0
     init: true
+    restart: unless-stopped
+    environment:
+      ZERO_TTT_CONTROL_URL: http://control:8090
+      ZERO_TTT_WORKER_ID: data-1
+      ZERO_TTT_RAW_ROOT: /raw
+      ZERO_TTT_DATA_WORK_ROOT: /work/data
+      ZERO_TTT_ARTIFACT_ROOT: /artifacts
+      ZERO_TTT_DATA_DB: /state/data/data.sqlite
     volumes:
       - type: bind
-        source: ./runs
-        target: /runs
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/raw
+        target: /raw
         read_only: true
-    command:
-      - tensorboard
-      - --logdir
-      - /runs
-      - --host
-      - 0.0.0.0
-      - --port
-      - "6006"
-      - --reload_interval
-      - "5"
-    ports:
-      - "127.0.0.1:6006:6006"
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "http://127.0.0.1:6006/"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 10s
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/work
+        target: /work
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/artifacts/data
+        target: /artifacts/data
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/artifacts/selfplay
+        target: /artifacts/selfplay
+        read_only: true
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/state/data
+        target: /state/data
+    command: ["zero-ttt-data-worker"]
+    depends_on:
+      control:
+        condition: service_healthy
 
-  training-ui:
+  trainer-worker:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: zero-ttt:torch2.13.0-cuda13.2-cudnn9-devel
-    working_dir: /workspace
+      dockerfile: docker/services/Dockerfile.trainer
+    image: zero-ttt/trainer:1.0.0
     init: true
+    restart: unless-stopped
+    gpus: all
+    shm_size: 8gb
+    stop_grace_period: 30m
     environment:
-      PYTHONPATH: /workspace/src
-      ZERO_TTT_AGENT_URL: http://training-agent:8090
+      ZERO_TTT_CONTROL_URL: http://control:8090
+      ZERO_TTT_WORKER_ID: trainer-1
+      ZERO_TTT_ARTIFACT_ROOT: /artifacts
+      ZERO_TTT_TRAINER_WORK_ROOT: /work/trainer
+    volumes:
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/work
+        target: /work
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/artifacts/data
+        target: /artifacts/data
+        read_only: true
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/artifacts/models
+        target: /artifacts/models
+    depends_on:
+      control:
+        condition: service_healthy
+
+  selfplay-worker:
+    build:
+      context: .
+      dockerfile: docker/services/Dockerfile.selfplay
+      target: selfplay
+    image: zero-ttt/selfplay:1.0.0
+    init: true
+    restart: unless-stopped
+    gpus: all
+    shm_size: 8gb
+    stop_grace_period: 30m
+    environment:
+      ZERO_TTT_CONTROL_URL: http://control:8090
+      ZERO_TTT_WORKER_ID: selfplay-1
+      ZERO_TTT_ARTIFACT_ROOT: /artifacts
+      ZERO_TTT_SELFPLAY_WORK_ROOT: /work/selfplay
+    volumes:
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/work
+        target: /work
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/artifacts/models
+        target: /artifacts/models
+        read_only: true
+      - type: bind
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/artifacts/selfplay
+        target: /artifacts/selfplay
+    depends_on:
+      control:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: .
+      dockerfile: docker/services/Dockerfile.cpu
+      args:
+        SERVICE: ui
+    image: zero-ttt/ui:1.0.0
+    init: true
+    restart: unless-stopped
+    environment:
+      ZERO_TTT_CONTROL_URL: http://control:8090
       ZERO_TTT_TENSORBOARD_URL: http://127.0.0.1:6006
       ZERO_TTT_UI_HOST: 0.0.0.0
       ZERO_TTT_UI_PORT: "8080"
@@ -133,79 +152,46 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
-      training-agent:
-        condition: service_healthy
-      tensorboard:
+      control:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://127.0.0.1:8080/"]
       interval: 5s
       timeout: 3s
-      retries: 12
+      retries: 20
       start_period: 10s
 
-  katago-version:
-    profiles: ["katago"]
+  tensorboard:
     build:
       context: .
-      dockerfile: docker/katago/Dockerfile
-    image: zero-ttt/katago:v1.17.2-cuda13.2
-    command: ["version"]
-
-  katago-analysis:
-    profiles: ["katago"]
-    build:
-      context: .
-      dockerfile: docker/katago/Dockerfile
-    image: zero-ttt/katago:v1.17.2-cuda13.2
-    gpus: all
+      dockerfile: docker/services/Dockerfile.tensorboard
+    image: zero-ttt/tensorboard:1.0.0
     init: true
-    stdin_open: true
+    restart: unless-stopped
     volumes:
       - type: bind
-        source: ./models/katago
-        target: /models
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}/artifacts/models
+        target: /artifacts/models
         read_only: true
-      - type: bind
-        source: ./configs/katago
-        target: /config
-        read_only: true
-    command:
-      - analysis
-      - -model
-      - /models/${KATAGO_MODEL_FILE:-model.bin.gz}
-      - -config
-      - /config/analysis.cfg
+    ports:
+      - "127.0.0.1:6006:6006"
 
-  katago-gtp:
-    profiles: ["katago"]
+  dev:
+    profiles: ["dev"]
     build:
       context: .
-      dockerfile: docker/katago/Dockerfile
-    image: zero-ttt/katago:v1.17.2-cuda13.2
-    gpus: all
+      dockerfile: docker/services/Dockerfile.selfplay
+      target: dev
+    image: zero-ttt/dev:1.0.0
+    working_dir: /workspace
     init: true
-    stdin_open: true
-    tty: true
+    gpus: all
+    shm_size: 8gb
     volumes:
       - type: bind
-        source: ./models/katago
-        target: /models
-        read_only: true
+        source: .
+        target: /workspace
       - type: bind
-        source: ./configs/katago
-        target: /config
-        read_only: true
-    command:
-      - gtp
-      - -model
-      - /models/${KATAGO_MODEL_FILE:-model.bin.gz}
-      - -config
-      - /config/gtp.cfg
-
-volumes:
-  huggingface-cache:
-  pip-cache:
-  torch-cache:
-  torch-extensions-cache:
-  uv-cache:
+        source: ${ZERO_TTT_DATA_ROOT:-D:/datasets/Zero-TTT}
+        target: /datasets
+    command: ["/bin/bash"]

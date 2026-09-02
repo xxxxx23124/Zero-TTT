@@ -4,10 +4,9 @@ from dataclasses import replace
 
 import pytest
 import torch
-
 from zero_ttt.config import load_config
 from zero_ttt.model.contracts import ModelDiagnostics, ModelOutput
-from zero_ttt.training.losses import TrainingTargets, compute_losses
+from zero_ttt_trainer.losses import TrainingTargets, compute_losses
 
 
 def model_output() -> ModelOutput:

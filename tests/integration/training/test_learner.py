@@ -6,12 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-
 from zero_ttt.config import config_from_mapping, load_config
-from zero_ttt.data.synthetic import SyntheticBatchSource
-from zero_ttt.learner import Learner, LearnerDataIdentity
 from zero_ttt.model import PolicyValueTransformer
-from zero_ttt.training.checkpoint import CheckpointManager
+from zero_ttt_dataset import SyntheticBatchSource
+from zero_ttt_trainer.checkpoint import CheckpointManager
+from zero_ttt_trainer.learner import Learner, LearnerDataIdentity
 
 
 def test_legacy_step_schedule_keys_are_rejected() -> None:

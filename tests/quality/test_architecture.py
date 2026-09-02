@@ -1,124 +1,82 @@
 from __future__ import annotations
 
 import ast
+import tomllib
 from pathlib import Path
 
-FORBIDDEN_IMPORTS = {
-    package: {"cli", "console", "control", "dashboard", "observability", "workflow"}
-    for package in ("game", "model", "data", "training")
+SERVICE_MODULES = {
+    "control": "zero_ttt_control",
+    "data": "zero_ttt_data",
+    "trainer": "zero_ttt_trainer",
+    "selfplay": "zero_ttt_selfplay_worker",
+    "ui": "zero_ttt_ui",
 }
 
 
-def _zero_ttt_root(module: str) -> str | None:
-    parts = module.split(".")
-    return parts[1] if len(parts) > 1 and parts[0] == "zero_ttt" else None
+def _imports(path: Path) -> tuple[tuple[int, str], ...]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    result: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            result.append((node.lineno, node.module))
+        elif isinstance(node, ast.Import):
+            result.extend((node.lineno, alias.name) for alias in node.names)
+    return tuple(result)
 
 
-def test_package_dependencies_follow_the_architecture_layers() -> None:
+def test_services_never_import_another_service() -> None:
     violations: list[str] = []
-    root = Path("src/zero_ttt")
-    for package, forbidden in FORBIDDEN_IMPORTS.items():
-        for path in sorted((root / package).rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for node in ast.walk(tree):
-                modules: list[str] = []
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    modules.append(node.module)
-                elif isinstance(node, ast.Import):
-                    modules.extend(alias.name for alias in node.names)
-                for module in modules:
-                    imported_root = _zero_ttt_root(module)
-                    if imported_root in forbidden:
-                        violations.append(f"{path}:{node.lineno} imports {module}")
+    for service, own_module in SERVICE_MODULES.items():
+        root = Path("services") / service / "src"
+        forbidden = set(SERVICE_MODULES.values()) - {own_module}
+        for path in sorted(root.rglob("*.py")):
+            for line, module in _imports(path):
+                if any(module == name or module.startswith(f"{name}.") for name in forbidden):
+                    violations.append(f"{path}:{line} imports {module}")
     assert violations == []
 
 
-def test_stable_package_exports_are_unchanged() -> None:
-    expected = {
-        "data": {
-            "AnnotationRecord",
-            "BatchSource",
-            "Catalog",
-            "CatalogBatchSource",
-            "ImportEvent",
-            "ManifestAsset",
-            "MixtureBatchSource",
-            "MixtureComponent",
-            "ShardStore",
-            "SelfPlayStatistics",
-            "SnapshotStatistics",
-            "SourceManifest",
-            "SyntheticBatchSource",
-            "TrainBatch",
-            "TrainingMixtureManifest",
-            "TrajectoryRecord",
-        },
-        "model": {
-            "BasePolicyValueModel",
-            "ModelDiagnostics",
-            "ModelOutput",
-            "ModelParameterGroup",
-            "PolicyValueTransformer",
-            "TokenLayout",
-        },
-        "inference": {
-            "BatchedInferenceBroker",
-            "BatchingStats",
-            "InferenceBatch",
-            "InferenceOutput",
-            "PositionEvaluator",
-            "PublicationPositionEvaluator",
-            "StateEvaluation",
-        },
-        "training": {
-            "CheckpointSummary",
-            "LearnerDataIdentity",
-            "ModelArtifactIdentity",
-            "PublicationSummary",
-        },
-        "search": {
-            "MCTSSearchResult",
-            "OpenSpielEvaluator",
-            "OpenSpielGoGame",
-            "OpenSpielGoState",
-            "search_position",
-        },
-        "selfplay": {"CollectionSummary", "SelfPlayCollector"},
-    }
-    for package, names in expected.items():
-        path = Path("src/zero_ttt") / package / "__init__.py"
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        assignment = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.Assign)
-            and any(
-                isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets
-            )
+def test_shared_packages_do_not_import_services() -> None:
+    violations: list[str] = []
+    service_modules = set(SERVICE_MODULES.values())
+    for path in sorted(Path("packages").rglob("*.py")):
+        for line, module in _imports(path):
+            if any(module == name or module.startswith(f"{name}.") for name in service_modules):
+                violations.append(f"{path}:{line} imports {module}")
+    assert violations == []
+
+
+def test_cpu_service_manifests_do_not_depend_on_torch_or_model_package() -> None:
+    for service in ("control", "data", "ui"):
+        document = tomllib.loads(
+            (Path("services") / service / "pyproject.toml").read_text(encoding="utf-8")
         )
-        assert isinstance(assignment.value, ast.List | ast.Tuple)
-        actual = {item.value for item in assignment.value.elts if isinstance(item, ast.Constant)}
-        assert actual == names
+        dependencies = "\n".join(document["project"].get("dependencies", ())).lower()
+        assert "torch" not in dependencies
+        assert "zero-ttt-model" not in dependencies
 
 
-def test_core_module_and_function_size_limits() -> None:
-    root = Path("src/zero_ttt")
-    oversized_modules = []
-    oversized_functions = []
-    schema_modules = {"catalog_session.py", "shard_codecs.py"}
-    for path in sorted(root.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        line_count = len(source.splitlines())
-        if line_count > 500:
-            oversized_modules.append(f"{path}:{line_count}")
-        if path.name in schema_modules:
-            continue
-        tree = ast.parse(source, filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.FunctionDef) or node.end_lineno is None:
-                continue
-            length = node.end_lineno - node.lineno + 1
-            if length > 60:
-                oversized_functions.append(f"{path}:{node.lineno} {node.name} ({length})")
-    assert oversized_modules == []
-    assert oversized_functions == []
+def test_legacy_orchestration_and_compatibility_facades_are_gone() -> None:
+    forbidden_paths = (
+        Path("src/zero_ttt/console"),
+        Path("src/zero_ttt/control"),
+        Path("src/zero_ttt/dashboard"),
+        Path("src/zero_ttt/cli.py"),
+        Path("src/zero_ttt/data/catalog/__init__.py"),
+        Path("src/zero_ttt/training/session.py"),
+        Path("src/zero_ttt/training/artifacts.py"),
+    )
+    assert not any(path.exists() for path in forbidden_paths)
+
+
+def test_contracts_have_no_torch_or_service_dependencies() -> None:
+    violations = []
+    for path in sorted(Path("packages/contracts").rglob("*.py")):
+        for line, module in _imports(path):
+            if (
+                module == "torch"
+                or module.startswith("torch.")
+                or module in SERVICE_MODULES.values()
+            ):
+                violations.append(f"{path}:{line} imports {module}")
+    assert violations == []

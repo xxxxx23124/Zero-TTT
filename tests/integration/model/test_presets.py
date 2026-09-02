@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import torch
-
 from zero_ttt.config import load_config
 from zero_ttt.model import PolicyValueTransformer
 
@@ -84,7 +83,4 @@ def test_production_and_baseline_experiment_switches() -> None:
     assert sum(parameter.numel() for parameter in production_model.parameters()) == 43_371_150
     assert sum(parameter.numel() for parameter in baseline_model.parameters()) == 41_189_893
     assert sum(parameter.numel() for parameter in future_model.parameters()) == 625_357_745
-    assert (
-        sum(parameter.numel() for parameter in future_baseline_model.parameters())
-        == 620_432_901
-    )
+    assert sum(parameter.numel() for parameter in future_baseline_model.parameters()) == 620_432_901

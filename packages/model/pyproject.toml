@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zero-ttt-model"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+  "torch>=2.13,<2.14",
+  "zero-ttt-core==1.0.0",
+  "zero-ttt-game==1.0.0",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = true

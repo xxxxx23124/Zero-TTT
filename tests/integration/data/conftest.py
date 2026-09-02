@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import pytest
-
-from zero_ttt.data.manifest import ManifestAsset, SourceManifest
-from zero_ttt.data.records import TrajectoryRecord
 from zero_ttt.game.rules import BOARD_AREA
 from zero_ttt.versioning import RECORD_SCHEMA, SOURCE_MANIFEST_SCHEMA
+from zero_ttt_data.manifest import ManifestAsset, SourceManifest
+from zero_ttt_dataset.records import TrajectoryRecord
 
 
 @pytest.fixture

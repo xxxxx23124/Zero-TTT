@@ -5,10 +5,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import torch
-
 from zero_ttt.config import load_config
 from zero_ttt.game.state import GameState
-from zero_ttt.inference import BatchedInferenceBroker, InferenceBatch, InferenceOutput
+from zero_ttt_selfplay_worker.inference import (
+    BatchedInferenceBroker,
+    InferenceBatch,
+    InferenceOutput,
+)
 
 
 class CountingEvaluator:

@@ -12,14 +12,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
-
 from zero_ttt.config import ExperimentConfig, load_config
 from zero_ttt.game.rules import ACTION_SIZE, BOARD_AREA, BOARD_SIZE
 from zero_ttt.model import ModelOutput, PolicyValueTransformer
 from zero_ttt.precision import configure_strict_fp32, require_fp32_module
-from zero_ttt.training.ema import update_slow_weights
-from zero_ttt.training.gradients import clip_model_gradients, parameters_are_finite
-from zero_ttt.training.losses import TrainingTargets, compute_losses
+from zero_ttt_trainer.ema import update_slow_weights
+from zero_ttt_trainer.gradients import clip_model_gradients, parameters_are_finite
+from zero_ttt_trainer.losses import TrainingTargets, compute_losses
 
 MEMORY_LIMIT_BYTES = int(14.5 * 1024**3)
 PARAMETER_LIMIT = 630_000_000

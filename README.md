@@ -1,79 +1,19 @@
 # Zero-TTT
 
-Zero-TTT 是一个仅在 Docker 中维护的 19×19 围棋学生模型训练研究项目。项目保留
-Transformer、Learner、EMA、checkpoint 和本地 Tromp–Taylor 棋规；目标训练路线是
-“监督冷启动 → OpenSpiel MCTS 自博弈 AlphaZero → 疑惑局面挑选 → 分级 KataGo 教师辅导”。
+Zero-TTT 是面向单机单 GPU 的围棋训练系统，采用单仓多包和独立服务部署：Control、Data、
+Trainer、Self-play 与 NiceGUI UI 只通过版本化 HTTP 作业契约和不可变产物引用协作。
 
-> **长期精度策略：** Zero-TTT 的神经网络训练、EMA、模型产物和推理固定使用严格 FP32，
-> 同时关闭 BF16/FP16 autocast 与 TF32。项目在可预见的长期内不提供精度开关、自动降精度或
-> 加载时精度转换。这个选择优先考虑强化学习小梯度、超网络梯度链路的数值稳健性，以及统一
-> 精度带来的易用和易排错；详见[严格 FP32 策略](docs/architecture/precision.md)。
+## 快速开始
 
-## 当前可用
-
-- 面向 RTX 4090 Laptop 的 43.37M 高效 Transformer、全关闭基线，以及保留供未来设备使用的
-  625M profile。
-- Tromp–Taylor 棋规、特征编码、模型损失和通用 `BatchSource` 训练接口。
-- g170 SGF Importer、版本化 trajectory/annotation NPZ、SQLite catalog 与快照采样。
-- `CatalogBatchSource`、样本尺度调度的 `Learner`、schema v8 checkpoint 和不可变 publication。
-- 从不可变 publication 加载的固定 batch-64 evaluator、OpenSpiel PUCT 适配和可恢复 MCTS 自博弈采集。
-- trajectory/shard/catalog v4、来源过滤 snapshot 与加权 `MixtureBatchSource`。
-- NiceGUI 数据准备与训练中心、TensorBoard 指标、软停止、状态恢复和 cold→mixture warm-start。
-- 合成数据与 64 盘真实 g170 棋谱驱动的 Docker 垂直冒烟测试。
-- 固定到 v1.17.2 的 KataGo CUDA 镜像、Analysis Engine 与 GTP 服务入口。
-- 固定到 v2.0.1 指定提交的 OpenSpiel 源码，并在开发镜像中从锁定依赖构建 `pyspiel`。
-
-尚未实现：无人值守 AlphaZero 自动长期循环、KataGo rich-NPZ 连接、分级教师、在线蒸馏、局域网教师、
-数据窗口和快权重。KataGo 也不会加载 Zero-TTT checkpoint；路线图中的“目标/未来”不代表
-现有功能。
-
-## 初始化与验证
-
-```bash
-git submodule update --init --recursive
-docker compose build dev
-docker compose run --rm dev python -m pytest -q
-docker compose run --rm dev python -m pytest -q tests/unit
-docker compose run --rm dev python -m pytest -q tests/integration
-docker compose run --rm dev python scripts/check_docs.py
-docker compose run --rm dev zero-ttt config-check --config configs/test.toml
-docker compose run --rm dev zero-ttt train-smoke --config configs/test.toml
+```powershell
+$env:ZERO_TTT_DATA_ROOT = 'D:/datasets/Zero-TTT'
+docker compose build
+docker compose up -d
 ```
 
-本机 Web 训练中心使用一条 Compose 命令启动；浏览器访问 `http://127.0.0.1:8080`，TensorBoard
-位于 `http://127.0.0.1:6006`。页面可扫描和导入 Windows 数据目录、创建/选择 snapshot、创建冻结
-训练任务，并执行训练、自博弈、warm-start 和安全暂停：
+- UI：<http://127.0.0.1:8080>
+- Control OpenAPI：<http://127.0.0.1:8090/docs>
+- TensorBoard：<http://127.0.0.1:6006>
 
-```bash
-docker compose up --build training-ui
-```
-
-默认业务数据位于 `D:\datasets\Zero-TTT`，训练任务位于仓库 `runs/`；二者都使用 bind mount，
-不保存在 Docker 命名卷。详细步骤见[本地 Web 训练中心](docs/operations/training-console.md)。
-
-项目不保证宿主机 Python、CUDA 或编译器环境可用。所有正式命令均以 Compose 服务为入口。
-
-## KataGo
-
-```bash
-docker compose --profile katago build katago-version
-docker compose --profile katago run --rm katago-version
-```
-
-Analysis/GTP 需要用户自行把权重放入 `models/katago/`。参见
-[KataGo 集成说明](docs/integrations/katago.md)与[Docker 运维](docs/operations/docker.md)。
-
-## 文档入口
-
-- [文档索引](docs/README.md)
-- [目标架构](docs/architecture/overview.md)
-- [统一训练生命周期](docs/workflows/training-lifecycle.md)
-- [序列化训练数据](src/zero_ttt/data/trajectory-storage.md)
-- [内部格式版本](docs/architecture/versioning.md)
-- [OpenSpiel MCTS 边界](src/zero_ttt/search/README.md)
-- [Learner 与流程边界](docs/architecture/learner-and-workflows.md)
-- [Human-SL 分级教师](docs/workflows/curriculum-teachers.md)
-- [快权重研究](docs/research/fast-weights/overview.md)
-- [论文索引](paper/README.md)
-
-许可证：MIT。第三方源码和模型权重遵循各自的许可证。
+业务数据不写入 Git 工作区。目录、服务所有权、三条有限流程和验证命令见
+[当前文档](docs/README.md)。

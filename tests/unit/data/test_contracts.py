@@ -3,11 +3,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
-
-from zero_ttt.data.contracts import TrainBatch
-from zero_ttt.data.synthetic import SyntheticBatchSource
 from zero_ttt.game.rules import ACTION_SIZE, BOARD_AREA, BOARD_SIZE
-from zero_ttt.inference.contracts import InferenceBatch, InferenceOutput, PositionEvaluator
+from zero_ttt_dataset import SyntheticBatchSource, TrainBatch
+from zero_ttt_selfplay_worker.inference.contracts import (
+    InferenceBatch,
+    InferenceOutput,
+    PositionEvaluator,
+)
 
 
 class FakeEvaluator:

@@ -1,0 +1,67 @@
+{
+  "$defs": {
+    "ArtifactKind": {
+      "enum": [
+        "source-manifest",
+        "data-verification",
+        "dataset-snapshot",
+        "selfplay-bundle",
+        "checkpoint",
+        "publication",
+        "metrics"
+      ],
+      "title": "ArtifactKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "format_version": {
+      "minimum": 1,
+      "title": "Format Version",
+      "type": "integer"
+    },
+    "kind": {
+      "$ref": "#/$defs/ArtifactKind"
+    },
+    "labels": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Labels",
+      "type": "object"
+    },
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "sha256": {
+      "title": "Sha256",
+      "type": "string"
+    },
+    "size_bytes": {
+      "minimum": 0,
+      "title": "Size Bytes",
+      "type": "integer"
+    },
+    "uri": {
+      "title": "Uri",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "artifact_id",
+    "format_version",
+    "sha256",
+    "uri",
+    "size_bytes"
+  ],
+  "title": "ArtifactRef",
+  "type": "object"
+}

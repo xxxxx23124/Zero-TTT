@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from zero_ttt.config import load_config
 from zero_ttt.versioning import EXPERIMENT_CONFIG_SCHEMA
 

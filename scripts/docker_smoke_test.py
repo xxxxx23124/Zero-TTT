@@ -8,7 +8,6 @@ import subprocess
 from pathlib import Path
 
 import torch
-
 from zero_ttt.precision import configure_strict_fp32
 
 EXPECTED_TORCH_PREFIX = "2.13.0"

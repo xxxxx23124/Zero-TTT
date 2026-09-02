@@ -1,0 +1,26 @@
+FROM python:3.12.12-slim-bookworm
+
+ARG SERVICE
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY requirements.lock ./requirements.lock
+COPY packages ./packages
+COPY services ./services
+
+RUN set -eux; \
+    case "$SERVICE" in \
+      control) python -m pip install --no-cache-dir -c requirements.lock ./packages/contracts ./services/control ;; \
+      data) python -m pip install --no-cache-dir \
+        -c requirements.lock \
+        ./packages/core ./packages/game ./packages/contracts ./packages/worker-runtime \
+        ./packages/dataset ./services/data ;; \
+      ui) python -m pip install --no-cache-dir -c requirements.lock ./services/ui ;; \
+      *) echo "unsupported CPU service: $SERVICE" >&2; exit 2 ;; \
+    esac

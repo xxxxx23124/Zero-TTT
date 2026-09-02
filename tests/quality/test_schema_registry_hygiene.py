@@ -6,8 +6,9 @@ from pathlib import Path
 
 def test_runtime_schema_versions_are_not_hard_coded_outside_registry() -> None:
     violations: list[str] = []
-    for path in sorted(Path("src/zero_ttt").rglob("*.py")):
-        if path.name == "versioning.py":
+    roots = (Path("packages"), Path("services"))
+    for path in sorted(path for root in roots for path in root.rglob("*.py")):
+        if path.name == "versioning.py" or Path("packages/contracts") in path.parents:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):

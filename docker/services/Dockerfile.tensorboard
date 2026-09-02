@@ -1,0 +1,4 @@
+FROM python:3.12.12-slim-bookworm
+COPY requirements.lock /requirements.lock
+RUN python -m pip install --no-cache-dir -c /requirements.lock "tensorboard>=2.18,<3"
+CMD ["tensorboard", "--logdir", "/artifacts/models/runs", "--host", "0.0.0.0", "--port", "6006"]

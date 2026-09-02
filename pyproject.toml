@@ -1,43 +1,35 @@
-[build-system]
-requires = ["setuptools>=70"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "zero-ttt"
-version = "0.1.0"
-description = "A Docker-only Go student-model training research system"
+name = "zero-ttt-workspace"
+version = "1.0.0"
+description = "Single-host, service-oriented Go training workspace"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
-dependencies = [
-  "numpy>=2.0",
-  "sgfmill==1.1.1",
-  "torch>=2.13,<2.14",
-]
 
-[project.scripts]
-zero-ttt = "zero_ttt.cli:main"
-zero-ttt-agent = "zero_ttt.control.main:main"
-zero-ttt-ui = "zero_ttt.dashboard.app:main"
-
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
+  "httpx>=0.28,<1",
   "pyright>=1.1,<2",
   "pytest>=8,<10",
   "ruff>=0.12,<1",
 ]
-dashboard = [
-  "fastapi>=0.115,<1",
-  "nicegui>=2,<4",
-  "tensorboard>=2.18,<3",
-  "uvicorn>=0.34,<1",
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+zero-ttt-contracts = { workspace = true }
+zero-ttt-core = { workspace = true }
+zero-ttt-dataset = { workspace = true }
+zero-ttt-game = { workspace = true }
+zero-ttt-model = { workspace = true }
+zero-ttt-worker-runtime = { workspace = true }
+
+[tool.uv.workspace]
+members = [
+  "packages/*",
+  "services/*",
+  "tools/admin-cli",
 ]
-
-[tool.setuptools]
-package-dir = { "" = "src" }
-
-[tool.setuptools.packages.find]
-where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -54,6 +46,15 @@ mccabe.max-complexity = 12
 
 [tool.pyright]
 pythonVersion = "3.12"
-typeCheckingMode = "basic"
-include = ["src/zero_ttt"]
+typeCheckingMode = "strict"
+include = ["packages", "services", "tools/admin-cli"]
 exclude = ["third_party"]
+reportMissingTypeStubs = false
+# Torch, NumPy and NiceGUI expose partially untyped runtime APIs. Keep strict
+# checking for our own annotations and concrete incompatibilities without
+# treating unknowns originating inside those libraries as application errors.
+reportUnknownArgumentType = false
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUnusedFunction = false

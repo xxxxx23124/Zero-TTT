@@ -4,10 +4,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-
-from zero_ttt.data.importers.protocols import ImporterRegistry
-from zero_ttt.data.manifest import ManifestAsset, SourceManifest
-from zero_ttt.data.records import ImportEvent
+from zero_ttt_data.importers.protocols import ImporterRegistry
+from zero_ttt_data.manifest import ManifestAsset, SourceManifest
+from zero_ttt_dataset.records import ImportEvent
 
 
 class FakeImporter:

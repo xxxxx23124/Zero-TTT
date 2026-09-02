@@ -1,45 +1,20 @@
 # 公共契约
 
-数据与推理接口位于 `zero_ttt.data` 和 `zero_ttt.inference`；模型的稳定导入面位于
-`zero_ttt.model`。Learner、v4 持久 schema 和 OpenSpiel adapter 已实现；教师服务仍未实现。
+公共调用固定在 `/api/v1`，Worker 租约协议固定在 `/internal/v1`。契约模型使用严格校验，
+未知字段会被拒绝；当前信封版本为 v1。权威描述由以下命令从 Pydantic 与 FastAPI 代码生成：
 
-## TrainBatch
+```powershell
+docker compose run --rm dev python scripts/generate_contracts.py
+```
 
-批量维度为 `B`：
+输出位于 `generated/contracts/openapi.json` 与 `generated/contracts/schemas/*.json`。
 
-| 字段 | 形状 | 语义 |
-| --- | --- | --- |
-| `board` | `B×25×19×19` | 当前行棋方特征 |
-| `global_features` | `B×5` | 贴目、手数和行棋方 |
-| `legal` | `B×362` | Tromp–Taylor 合法着 |
-| `policy` | `B×362` | 合法着上的归一化目标分布 |
-| `value` | `B` | 当前行棋方结果 |
-| `ownership` | `B×361` | 可选归属标签 |
-| `score_margin` | `B` | 可选目差标签 |
-| `value_mask` | `B` | value 是否有效 |
-| `ownership_mask` | `B` | ownership 是否有效 |
-| `score_mask` | `B` | score margin 是否有效 |
+服务间只传 `ArtifactRef`。URI 必须使用 `artifact://`，引用同时包含逻辑类型、稳定 ID、
+格式版本、SHA-256 和字节数。消费者在打开内容前验证大小与哈希。
 
-policy 来源可以是人类实战落子、学生 MCTS 访问分布或教师搜索分布；必须通过来源与 mask
-区分，学生 raw policy 不作为自身的改进标签。
+Worker 通过能力注册和长轮询领取 `JobEnvelope`。信封包含尝试次数、幂等键、输入引用、
+租约令牌和到期时间。完成、失败、续租与事件追加都必须携带该令牌。Control 提供至少一次
+执行语义；业务服务依靠内容寻址、作业临时目录和原子提交实现幂等。
 
-## PositionEvaluator
-
-`InferenceBatch` 接收相同特征张量与合法着掩码；`InferenceOutput` 返回 policy logits、value，
-并可返回 ownership/score。全部浮点输入输出必须是 FP32；实现必须暴露不可混淆的
-`model_version`。
-
-OpenSpiel Evaluator 将合法着 logits 归一化为 prior，并把“当前行棋方”value 转成双方
-value 数组。一次搜索内 publication、特征 schema、规则和未来快状态版本必须冻结。
-
-## 持久逻辑契约
-
-以下名称已作为版本化 Python 类型实现：
-
-- `TrajectoryRecord`：一盘完整、有序、从空棋盘和 moves 确定性重放的棋局；当前格式不接受
-  setup/handicap/initial-position，且持久化本局 `max_moves`。
-- `AnnotationRecord`：以 `(game_id, ply, teacher_fingerprint)` 连接的可追加教师标签。
-- `RatingSnapshot`：可选、评级池相关、带误差或 RD 的 agent 评测结果。
-
-物理格式、必备身份和淘汰规则见[序列化训练数据](../../src/zero_ttt/data/trajectory-storage.md)。局域网任务与结果仍
-只有[文档协议](../integrations/lan-teacher.md)；Learner 永远不接触 KataGo 原始 JSON。
+事件序号由 Control SQLite 单调分配。客户端可以用分页接口断点读取，也可以通过 SSE 流
+持续消费；UI 重启后使用最后持久序号重建视图。

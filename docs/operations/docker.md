@@ -1,85 +1,59 @@
 # Docker 运维
 
-Zero-TTT 只维护 Docker 工作流。宿主机只需要 Git、Docker Compose、兼容 NVIDIA 驱动和
-Container Toolkit；不维护宿主机 Python、PyTorch、CUDA 或编译器兼容性。
-
-## 开发与测试
+先设置业务数据根目录；默认值为 `D:/datasets/Zero-TTT`：
 
 ```powershell
-git submodule update --init --recursive
-docker compose build dev
+$env:ZERO_TTT_DATA_ROOT = 'D:/datasets/Zero-TTT'
+docker compose build
+docker compose up -d control data-worker trainer-worker selfplay-worker ui tensorboard
+docker compose ps
+```
+
+端口仅绑定本机：UI `8080`、Control API `8090`、TensorBoard `6006`。
+
+权威质量门禁：
+
+```powershell
+docker compose run --rm dev python -m ruff check .
+docker compose run --rm dev python -m ruff format --check .
+docker compose run --rm dev pyright
 docker compose run --rm dev python -m pytest -q
-docker compose run --rm dev python -m pytest -q tests/unit
-docker compose run --rm dev python -m pytest -q tests/integration
-docker compose run --rm dev python -m pytest -q tests/quality
-docker compose run --rm dev python -m ruff check src tests scripts
-docker compose run --rm dev python scripts/check_docs.py
-docker compose run --rm dev zero-ttt config-check --config configs/test.toml
-docker compose run --rm dev zero-ttt train-smoke --config configs/test.toml
+docker compose run --rm dev python scripts/generate_contracts.py --check
+docker compose config --quiet
+git diff --check
 ```
 
-正式 CUDA profile 位于 `configs/profiles/`。数据、训练任务与用户提供的模型均不进入 Git。
-
-## Web 训练中心
-
-默认数据根目录为 `D:\datasets\Zero-TTT`。如需更改，在当前 PowerShell 会话设置：
+隔离的 Compose 端到端验收使用项目专属命名卷，不挂载正式业务目录：
 
 ```powershell
-$env:ZERO_TTT_DATA_ROOT = 'E:\Zero-TTT-data'
+docker compose -f compose.yaml -f compose.e2e.yaml --project-name zero-ttt-e2e --profile dev run --rm --no-deps dev python scripts/compose_e2e_test.py prepare /datasets
+docker compose -f compose.yaml -f compose.e2e.yaml --project-name zero-ttt-e2e up -d --wait
+docker compose -f compose.yaml -f compose.e2e.yaml --project-name zero-ttt-e2e --profile dev run --rm --no-deps dev python scripts/compose_e2e_test.py run bootstrap
+docker compose -f compose.yaml -f compose.e2e.yaml --project-name zero-ttt-e2e restart control ui
+docker compose -f compose.yaml -f compose.e2e.yaml --project-name zero-ttt-e2e --profile dev run --rm --no-deps dev python scripts/compose_e2e_test.py run alpha
+docker compose -f compose.yaml -f compose.e2e.yaml --project-name zero-ttt-e2e --profile dev down -v
 ```
 
-目录必须包含 `raw`、`staging`、`manifests`、`processed` 和 `catalog`。启动入口是：
+GPU 验收分别执行驱动/严格 FP32、完整 optimizer step 和并发 MCTS 自博弈：
 
 ```powershell
-docker compose up --build training-ui
+docker compose run --rm dev python scripts/docker_smoke_test.py
+docker compose run --rm dev python scripts/model_smoke_test.py --configs configs/profiles/rtx4090l.toml --default-optimizer-steps 1 --accumulation-steps 1 --disable-compile
+docker compose run --rm dev python scripts/selfplay_gpu_smoke_test.py
 ```
 
-该命令同时启动 `training-agent` 与 `tensorboard`。页面仅绑定 `127.0.0.1:8080`，TensorBoard
-仅绑定 `127.0.0.1:6006`，训练代理只在 Compose 内部网络开放。停止 Compose 时代理向可暂停作业
-转发 SIGTERM；训练完成当前 optimizer step，数据导入封存当前 shard。
+Control 重启后会从 `control.sqlite` 恢复作业；过期租约重新排队。Data 与各 GPU Worker 启动
+时会重用已提交的内容寻址产物，临时文件不会被当作完成结果。Trainer 与 Self-play 共同竞争
+`gpu-exclusive` 租约，因此单 GPU 主机上不会并发运行。
 
-目录挂载如下：
+业务目录：
 
-| Windows | 容器 | 权限 |
-| --- | --- | --- |
-| `<data-root>\raw` | `/datasets/raw` | 只读 |
-| `<data-root>\staging` | `/datasets/staging` | 读写 |
-| `<data-root>\manifests` | `/datasets/manifests` | 读写 |
-| `<data-root>\processed` | `/datasets/processed` | 读写 |
-| `<data-root>\catalog` | `/datasets/catalog` | 读写 |
-| `<repo>\runs` | `/runs` | 训练代理读写、TensorBoard 只读 |
-
-pip、Torch、Hugging Face、编译扩展和 uv 缓存仍使用可删除命名卷。业务数据不使用命名卷，
-`docker compose down` 后仍可从 Windows 直接查看。只有用户明确决定时才清理缓存卷。
-
-页面工作流见[本地 Web 训练中心](training-console.md)。真实 g170 垂直冒烟可为 `dev` 叠加
-`compose.data.yaml`，它使用相同的 Windows 子目录 bind mount：
-
-```powershell
-docker compose -f compose.yaml -f compose.data.yaml run --rm dev `
-  python scripts/data_smoke_test.py
+```text
+raw/                         用户输入，只读
+work/                        可清理的作业临时文件
+artifacts/data/              Data 唯一写
+artifacts/models/            Trainer 唯一写
+artifacts/selfplay/          Self-play 唯一写
+state/control/control.sqlite Control 独占
+state/data/data.sqlite       Data 独占
 ```
-
-## 高级 CLI
-
-底层 `manifest-create`、`data-import`、`data-verify`、`snapshot-create`、`selfplay-collect` 和
-`offline-imitation` 仍保留给测试、自动化和高级排障。普通用户不需要执行这些命令。正式训练方案
-路径应使用 `configs/profiles/rtx4090l.toml`；同目录的 `rtx4090l_baseline.toml` 用于关闭
-HyperNet/DWA 的对照，`rtx4090l_625m_future*.toml` 只供未来设备实验。`offline-imitation`
-还必须显式提供 `--run-dir`，避免把运行目录重新塞回实验超参数配置。
-
-当前写入格式为 record/shard/catalog v4、来源与 mixture manifest v2、实验配置和模型产物 v8、
-Web run spec v1、控制状态 v2。读取器只接受精确当前版本，不提供旧格式迁移。
-
-## KataGo
-
-```powershell
-docker compose --profile katago build katago-version
-docker compose --profile katago run --rm katago-version
-docker compose --profile katago run --rm -T katago-analysis
-docker compose --profile katago run --rm katago-gtp
-```
-
-后两个命令要求 `models/katago/` 中存在由 `KATAGO_MODEL_FILE` 指定的网络。配置和模型只读挂载。
-KataGo 网络管理见[集成说明](../integrations/katago.md)，数据格式见
-[序列化训练数据](../../src/zero_ttt/data/trajectory-storage.md)。

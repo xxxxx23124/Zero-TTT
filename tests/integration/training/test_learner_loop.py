@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 import torch
-
 from zero_ttt.config import load_config
-from zero_ttt.data.synthetic import SyntheticBatchSource
-from zero_ttt.learner import Learner
 from zero_ttt.model import PolicyValueTransformer
-from zero_ttt.training.checkpoint import CheckpointManager
+from zero_ttt_dataset import SyntheticBatchSource
+from zero_ttt_trainer.checkpoint import CheckpointManager
+from zero_ttt_trainer.learner import Learner
 
 
 def test_hypernetwork_trains_from_first_step_at_reduced_learning_rate(tmp_path) -> None:

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import pytest
 import torch
-
 from zero_ttt.config import load_config
-from zero_ttt.inference import InferenceBatch, PublicationPositionEvaluator
 from zero_ttt.model import PolicyValueTransformer
-from zero_ttt.training.checkpoint import CheckpointManager, checkpoint_metadata
+from zero_ttt_selfplay_worker.inference import InferenceBatch, PublicationPositionEvaluator
+from zero_ttt_trainer.checkpoint import CheckpointManager, checkpoint_metadata
 
 
 def test_publication_evaluator_loads_and_hides_fixed_padding(tmp_path) -> None:

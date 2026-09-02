@@ -5,23 +5,22 @@ import json
 
 import pytest
 import torch
-
-from zero_ttt.training.checkpoint import CheckpointManager, checkpoint_metadata
 from zero_ttt.versioning import MODEL_ARTIFACT_SCHEMA
+from zero_ttt_trainer.checkpoint import CheckpointManager, checkpoint_metadata
 
 
-def test_v6_checkpoint_and_publication_schemas_are_rejected(tmp_path) -> None:
+def test_non_v1_checkpoint_and_publication_schemas_are_rejected(tmp_path) -> None:
     path = tmp_path / "legacy.pt"
     torch.save({"checkpoint_schema_version": 6}, path)
     for loader in (CheckpointManager.load, CheckpointManager.load_publication):
         with pytest.raises(
             ValueError,
-            match=r"model artifact.*expected v8.*new run",
+            match=r"model artifact.*expected v1.*new run",
         ):
             loader(path)
 
 
-def test_publications_are_immutable_run_scoped_and_retained(tmp_path) -> None:
+def test_publications_are_immutable_run_scoped_and_never_pruned_implicitly(tmp_path) -> None:
     manager = CheckpointManager(tmp_path, keep=1, publication_keep=2)
     config_json = "{}"
     metadata = checkpoint_metadata(
@@ -32,7 +31,7 @@ def test_publications_are_immutable_run_scoped_and_retained(tmp_path) -> None:
     first = manager.save_publication("run-a", 1, 4, state, metadata)
     manager.save_publication("run-a", 2, 8, state, metadata)
     latest = manager.save_publication("run-a", 3, 12, state, metadata)
-    assert not first.exists()
+    assert first.exists()
     assert latest.exists()
     assert manager.current_publication() == latest
     pointer = json.loads((manager.publication_dir / "current.json").read_text(encoding="utf-8"))
@@ -66,5 +65,5 @@ def test_legacy_current_pt_is_not_a_publication_pointer(tmp_path) -> None:
 def test_unversioned_publication_pointer_is_rejected(tmp_path) -> None:
     manager = CheckpointManager(tmp_path, keep=1)
     (manager.publication_dir / "current.json").write_text("{}", encoding="utf-8")
-    with pytest.raises(ValueError, match=r"model artifact.*expected v8"):
+    with pytest.raises(ValueError, match=r"model artifact.*expected v1"):
         manager.current_publication()

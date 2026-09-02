@@ -4,12 +4,15 @@ import dataclasses
 
 import numpy as np
 import torch
-
-import zero_ttt.search.open_spiel as open_spiel_adapter
+import zero_ttt_selfplay_worker.search.open_spiel as open_spiel_adapter
 from zero_ttt.config import load_config
 from zero_ttt.game.rules import ACTION_SIZE, PASS_ACTION
-from zero_ttt.inference import BatchedInferenceBroker, InferenceBatch, InferenceOutput
-from zero_ttt.search import OpenSpielEvaluator, OpenSpielGoGame, search_position
+from zero_ttt_selfplay_worker.inference import (
+    BatchedInferenceBroker,
+    InferenceBatch,
+    InferenceOutput,
+)
+from zero_ttt_selfplay_worker.search import OpenSpielEvaluator, OpenSpielGoGame, search_position
 
 
 class UniformEvaluator:

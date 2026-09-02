@@ -3,8 +3,7 @@ from __future__ import annotations
 import hashlib
 
 import pytest
-
-from zero_ttt.training.contracts import (
+from zero_ttt_trainer.contracts import (
     CheckpointSummary,
     LearnerDataIdentity,
     PublicationSummary,

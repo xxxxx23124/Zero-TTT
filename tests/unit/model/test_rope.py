@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 import torch
 from torch import nn
-
 from zero_ttt.config import RoPEConfig, load_config
 from zero_ttt.game.rules import BOARD_AREA
 from zero_ttt.model.rope import AxialRoPE2D
@@ -35,13 +34,13 @@ def test_coordinate_origin_and_all_special_tokens_are_unrotated() -> None:
     values = torch.randn(2, 2, layout.total_tokens, 12)
 
     centered = AxialRoPE2D(rope_config(centered=True), 12, layout, board_size=3)
-    centered_values = centered.apply(values)
+    centered_values = centered.rotate(values)
     center = token_index(1, 1, 3)
     assert torch.equal(centered_values[..., center, :], values[..., center, :])
     assert torch.equal(layout.special(centered_values), layout.special(values))
 
     uncentered = AxialRoPE2D(rope_config(centered=False), 12, layout, board_size=3)
-    uncentered_values = uncentered.apply(values)
+    uncentered_values = uncentered.rotate(values)
     top_left = token_index(0, 0, 3)
     assert torch.equal(uncentered_values[..., top_left, :], values[..., top_left, :])
     assert not torch.equal(uncentered_values[..., center, :], values[..., center, :])
@@ -52,7 +51,7 @@ def test_row_and_column_rotations_use_independent_subspaces() -> None:
     rope = AxialRoPE2D(rope_config(), 8, layout, board_size=3)
     vector = torch.arange(1, 9, dtype=torch.float32)
     values = vector.repeat(layout.total_tokens).reshape(1, 1, layout.total_tokens, 8)
-    rotated = rope.apply(values)
+    rotated = rope.rotate(values)
 
     top_left = rotated[..., token_index(0, 0, 3), :]
     top_right = rotated[..., token_index(0, 2, 3), :]
@@ -90,7 +89,7 @@ def test_rotation_preserves_norm_dtype_and_unrotated_tail() -> None:
     values = torch.linspace(-2.0, 3.0, layout.total_tokens * 12).reshape(
         1, 1, layout.total_tokens, 12
     )
-    rotated = rope.apply(values)
+    rotated = rope.rotate(values)
 
     assert rotated.dtype == values.dtype
     assert torch.allclose(
@@ -115,7 +114,7 @@ def test_learnable_frequencies_receive_gradient_and_fixed_frequencies_are_buffer
         1, 1, layout.total_tokens, 8
     )
     weights = torch.linspace(0.1, 1.0, values.numel()).reshape_as(values)
-    (learnable.apply(values) * weights).sum().backward()
+    (learnable.rotate(values) * weights).sum().backward()
     assert learnable.inv_freq.grad is not None
     assert torch.isfinite(learnable.inv_freq.grad).all()
     assert torch.count_nonzero(learnable.inv_freq.grad) > 0
@@ -137,7 +136,7 @@ def test_rope_rejects_invalid_configuration_layout_and_token_count() -> None:
 
     rope = AxialRoPE2D(rope_config(), 8, layout, board_size=3)
     with pytest.raises(ValueError, match="expected 10 tokens"):
-        rope.apply(torch.zeros(1, 1, 9, 8))
+        rope.rotate(torch.zeros(1, 1, 9, 8))
 
 
 def test_production_rope_frequency_span_is_stable() -> None:
